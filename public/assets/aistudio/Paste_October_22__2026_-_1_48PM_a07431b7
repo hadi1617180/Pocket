@@ -1,0 +1,927 @@
+# Pocket — Product Requirements Document (PRD)
+
+Version 1.0 · Android · Offline-first · Personal use · No backend
+
+Pocket is a minimalist personal finance app for Android that lets one person track income, expenses, multiple wallets, transfers, monthly spending, and loans — entirely on their own device, without an account or internet connection.
+
+The product principle is simple: know where your money is, where it goes, and what you owe — without turning money tracking into a chore.
+
+[Finance Mobile App by Nishar Multani on Dribbble](https://images.openai.com/static-rsc-4/3Qsw6TFP8mTeTliTXydXwhDorhOB3P4UJkVcpYRG4yAOQtzeFfu27SSeZ3mH4zS6x6UtFeOwzNIPuc2AgfxlR_SdIFwssII67TwxY8s5bDuBRCVoZDvFW-cKLEviMUxiuyE0KZLVOrmKpta079AxVVc3R1Wi-W5jBKR1YkHqA5M?purpose=inline)
+
+[dribbble.com](https://dribbble.com/shots/21041292-Finance-Mobile-App?utm_source=chatgpt.com)
+
+Visual direction: clean typography, generous whitespace, subtle accents, minimal decoration. Reference imagery only.
+
+## 1. Product overview
+
+Multiple wallets
+
+Cash, bKash, Nagad, Rocket, bank accounts, Metro Rapid Pass, and custom wallets — each with its own balance.
+
+Complete money tracking
+
+Record income, expenses, wallet transfers, transfer fees, lending, borrowing, repayments, and settlements.
+
+Monthly insights
+
+Income versus expenses, category breakdowns, wallet balances, monthly statements, and searchable history.
+
+Private and offline
+
+No sign-in, no cloud account, no required internet access, and local backup/import for changing phones.
+
+### Product constraints
+
+| Requirement      | Decision                                                           |
+| ---------------- | ------------------------------------------------------------------ |
+| Platform         | Android phone                                                      |
+| User model       | One person, one local profile                                      |
+| Backend          | None                                                               |
+| Database         | Local SQLite database                                              |
+| Network          | Not required for core functionality                                |
+| Currency         | BDT (৳) as the default; configurable later                         |
+| Language         | English initially                                                  |
+| Authentication   | None                                                               |
+| Data portability | Encrypted or plain backup file, with user-controlled export/import |
+| Design           | Minimalist, fast, accessible, low-clutter                          |
+
+Important accounting rule: Wallet transfers are not income or expenses. A transfer moves money between accounts; only a transfer charge is an expense. Loan principal and repayments also need special treatment so that borrowed money is not mistaken for earned income and repaid principal is not double-counted as spending.
+
+## 2. Navigation and screen architecture
+
+Use a bottom navigation bar with only four destinations. Keep the primary actions accessible from the Home screen.
+
+## Pocket
+
+OCTOBER 2026
+
+Total available balance
+
+# ৳ 24,850.00
+
+Income
+
+## ৳ 32,000
+
+Expenses
+
+## ৳ 12,400
+
+#### Quick actions
+
+Income
+
+Expense
+
+Transfer
+
+#### Recent transactions
+
+Groceries
+
+Cash · Today
+
+−৳ 850
+
+Salary
+
+Bank · Today
+
++৳ 30,000
+
+Home
+
+Wallets
+
+Reports
+
+Settings
+
+Illustrative Home screen. All figures are mock data and represent a proposed layout, not a running application.
+
+### Navigation map
+
+01
+
+Home
+
+Balance overview, quick actions, recent transactions
+
+02
+
+Wallets
+
+All balances, wallet details, transfers, adjustments
+
+03
+
+Reports
+
+Monthly graph, statements, categories, trends
+
+04
+
+Settings
+
+Categories, loans, backup, restore, preferences
+
+Global actions:
+
+- Floating or prominently positioned `+` button for recording income or expenses.
+- Transfer action accessible from Home and Wallets.
+- Search and date filtering in transaction history.
+- Consistent back navigation and confirmation before destructive actions.
+
+## 3. Screen-wise requirements
+
+The following defines the screen behavior, fields, actions, and acceptance criteria for implementation.
+
+### Screen 01 — First launch and setup
+
+Purpose: Make the app usable within seconds, with no registration or onboarding burden.
+
+[Smart Budgeting for Students: Apps That Make Managing Money a Breeze – Cairo 360 Guide to Cairo, Egypt](https://images.openai.com/static-rsc-4/02HMrAzmY2GXTi-8Rh0i0-ji-SW3RZnhprQD8mbgle0WWbgKj18SLXwd6NVmqT1ZVmvRoK3UvjIcWC-jpEMjn45pWSK15t-EFvm26pHJVIdZJrZa--D3eLAVDVkMdRPLZqSFqlkB-VUgMiSyPev0p6GgNmvKLRi2dzvpJMANKPw?purpose=inline)
+
+UI elements
+
+- Pocket logo and name.
+- One-line description: “Your money, organized.”
+- Default currency selector, initially BDT.
+- Optional initial wallet setup.
+- `Get started` button.
+
+Behavior
+
+- Create the local database on first launch.
+- Do not request an email address, phone number, or password.
+- Offer a few starter wallets: Cash, bKash, Bank, Nagad, and Rocket.
+- Let the user skip wallet setup and add wallets later.
+- Provide a default set of income and expense categories that can be edited.
+
+Acceptance criteria
+
+- The user can reach Home in under one minute.
+- No internet connection is required.
+- Reopening the app does not restart onboarding.
+
+### Screen 02 — Home dashboard
+
+Purpose: Answer “How much money do I have?” and “How much have I spent this month?”
+
+### Required components
+
+1. Current total available balance across active wallets.
+2. Selected month's income and expenses.
+3. Monthly net cash flow: income minus expenses.
+4. Quick actions for Income, Expense, and Transfer.
+5. Wallet balance preview.
+6. Recent transactions, with amount, category, wallet, and date.
+7. Optional outstanding loan/receivable summary.
+
+Interactions
+
+- Tap the month selector to view another month.
+- Tap an income or expense total to open its filtered transaction list.
+- Tap a wallet to open Wallet Details.
+- Tap a transaction to view, edit, or delete it.
+- Use `+` to open a compact transaction-type menu.
+
+Rules
+
+- Exclude transfers from income and expense totals.
+- Deduct transfer fees from the source wallet and record the fee as an expense.
+- Show a clear empty state for new users.
+- Balance totals must reflect transactions and adjustments, not just monthly activity.
+
+Acceptance criteria: Home updates immediately after any transaction change, including edits, deletions, and repayments.
+
+### Screen 03 — Add income
+
+Purpose: Record money received.
+
+| Field              | Requirement                              |
+| ------------------ | ---------------------------------------- |
+| Amount             | Required; positive numeric value         |
+| Category           | Required; selectable or add new          |
+| Destination wallet | Required                                 |
+| Date and time      | Defaults to current local time; editable |
+| Source / note      | Optional                                 |
+| Reference          | Optional, such as salary month           |
+
+Suggested income categories: Salary, Freelance, Business, Gift, Interest, Refund, Investment Return, Other.
+
+Actions: Save, Save and Add Another, Cancel.
+
+Validation and logic
+
+- Amount must be greater than zero.
+- The selected wallet balance increases by the amount.
+- The income transaction appears in history and the monthly report.
+- A refund should be configurable as an expense reversal instead of new income when appropriate.
+
+Acceptance criteria: Saving an income entry updates the selected wallet and relevant dashboard figures without reloading the app.
+
+### Screen 04 — Add expense
+
+Purpose: Record money spent.
+
+| Field             | Requirement                      |
+| ----------------- | -------------------------------- |
+| Amount            | Required; positive numeric value |
+| Category          | Required                         |
+| Payment wallet    | Required                         |
+| Date and time     | Editable; defaults to now        |
+| Merchant / note   | Optional                         |
+| Tags              | Optional, e.g. work, family      |
+| Mark as recurring | Future enhancement               |
+
+Suggested expense categories: Food, Groceries, Transport, Rent, Bills, Shopping, Health, Education, Entertainment, Mobile Recharge, Fees, Other.
+
+Interactions
+
+- Add a category inline without losing the current form.
+- Show the selected wallet's available balance.
+- Permit spending that results in a negative balance, but warn the user.
+- Support editing and deleting saved expenses.
+
+Acceptance criteria: An expense reduces the selected wallet balance and increases the appropriate month's expense total. It must not reduce balances twice after an edit or save retry.
+
+### Screen 05 — Wallets overview
+
+Purpose: See all financial containers and their balances at a glance.
+
+Cash
+
+Physical money
+
+### ৳ 3,500
+
+bKash
+
+Mobile financial account
+
+### ৳ 8,200
+
+Bank Account
+
+Savings / current
+
+### ৳ 10,000
+
+Metro Rapid Pass
+
+Transit balance
+
+### ৳ 650
+
+Nagad
+
+Mobile financial account
+
+### ৳ 2,500
+
+Total wallet balances
+
+## ৳ 24,850
+
+Example layout; sample balances are illustrative and should be reconciled before real use.
+
+Requirements
+
+- Create, rename, archive, and reorder wallets.
+- Support wallet types: Cash, Mobile Financial Service (MFS), Bank, Transit Card, Savings, and Custom.
+- Set an opening balance and its effective date.
+- Set a wallet's icon and optional color.
+- View active and archived wallets separately.
+- Do not permanently delete a wallet containing transaction history without an explicit safe migration or deletion flow.
+
+Important design decision: Metro Rapid Pass can be tracked as a wallet. A top-up is a transfer into that wallet if both accounts are tracked; otherwise it can be recorded as an expense from the funding wallet. This avoids counting the same money twice.
+
+### Screen 06 — Wallet details
+
+Purpose: Explain exactly how a wallet's current balance was calculated.
+
+UI elements
+
+- Wallet name, type, current balance, and optional account hint.
+- `Add Income`, `Add Expense`, `Transfer`, and `Adjust Balance` actions.
+- Wallet transaction history with date filters.
+- Opening balance, total money in, total money out, fees, and adjustments.
+- Edit wallet and archive wallet actions.
+
+Acceptance criteria
+
+- Every wallet transaction is traceable.
+- Wallet-specific totals reconcile with the transaction ledger.
+- Archived wallets retain their history and remain included in historical reports.
+
+### Screen 07 — Transfer between wallets
+
+Purpose: Move money between wallets without distorting income and expense reporting.
+
+### Transfer form
+
+From walletbKash · ৳8,200
+
+To walletCash · ৳3,500
+
+Amount to transfer (৳)
+
+#### Transfer charge
+
+No charge
+
+Enter charge manually
+
+Calculate as a percentage
+
+Fixed charge + percentage
+
+Illustrative form. A production implementation should show the calculated total debit before saving.
+
+Transfer charge calculation
+
+Support these modes:
+
+1. No charge.
+2. Fixed fee.
+3. Percentage of transfer amount.
+4. Fixed fee plus percentage.
+5. Manual override for a specific transfer.
+
+Calculation:
+
+\\[ \text{Fee}=\text{Fixed fee}+ \frac{\text{Amount}\times\text{Rate (\\%)}}{100} \\]
+
+\\[ \text{Source debit}=\text{Amount}+\text{Fee} \\]
+
+\\[ \text{Destination credit}=\text{Amount} \\]
+
+For a transfer of ৳1,000 with a 1.5% charge, the source wallet is debited ৳1,015 and the destination receives ৳1,000. The ৳15 fee is recorded as an expense associated with the transfer.
+
+Validation
+
+- Source and destination wallets must differ.
+- Amount must be greater than zero.
+- Fee cannot be negative.
+- Show source balance after transfer before saving.
+- If the source wallet lacks funds, warn the user; follow the app's negative-balance preference.
+- Save both sides of the transfer and the fee atomically, so a failed save cannot leave an incomplete transfer.
+
+Acceptance criteria: The transfer changes wallet balances correctly, creates no artificial income or expense for the principal, and remains traceable as one transfer.
+
+### Screen 08 — Transaction history and search
+
+Purpose: Find any past income, expense, transfer, or loan-related transaction.
+
+UI elements
+
+- Search bar for notes, merchants, categories, and transaction descriptions.
+- Date range selector: This Month, Last Month, Last 30 Days, Custom.
+- Filters for transaction type, wallet, category, and amount range.
+- Grouped list by date.
+- Daily totals and selected-period totals.
+- Edit, delete, and duplicate actions.
+
+Transaction list row
+
+Each row should show:
+
+- Category icon and description.
+- Date/time and wallet name.
+- Amount with a clear sign and subtle color.
+- A small transfer or loan indicator when applicable.
+
+Behavior
+
+- Changing a filter updates the list and period totals.
+- Search works completely offline.
+- Deleting a transaction updates the ledger, wallet balance, and reports.
+- For transfers, deleting the transfer should reverse both wallet movements and the associated fee transaction together.
+
+Acceptance criteria: Results are deterministic, filter combinations work together, and search includes older archived-wallet transactions.
+
+### Screen 09 — Monthly reports
+
+Purpose: Understand monthly spending without requiring advanced financial analysis.
+
+### Monthly overview
+
+October 2026
+
+Income
+
+## ৳ 32,000
+
+Expenses
+
+## ৳ 12,400
+
+#### Income vs. expenses
+
+Income
+
+Expenses
+
+#### Spending by category
+
+Food & Groceries
+
+৳ 4,000
+
+32%
+
+Transport
+
+৳ 2,500
+
+20%
+
+Bills
+
+৳ 2,000
+
+16%
+
+Shopping
+
+৳ 1,500
+
+12%
+
+Other
+
+৳ 2,400
+
+19.4%
+
+Illustrative report layout using mock data. Rounded category percentages may not sum to exactly 100%.
+
+Required report views
+
+- Monthly income versus expenses graph.
+- Daily or weekly spending trend.
+- Expense category breakdown.
+- Income category breakdown.
+- Wallet balance comparison.
+- Net cash flow by month.
+- Loan receivables and payables summary.
+
+Interactions
+
+- Switch between months.
+- Tap a graph point to inspect that period.
+- Tap a category to see its transactions.
+- Toggle between bar chart and line chart where meaningful.
+- Choose an inclusive custom date range.
+
+Accounting rules
+
+- Reports must distinguish cash-flow movement from accounting classification.
+- Wallet transfers do not count as income or expenses, except recorded charges.
+- Loan principal received is not income; principal repaid is not expense.
+- Loan interest paid is an expense; interest earned is income.
+- If a loan or expense is partially repaid, only the actual recorded amounts are included.
+
+Acceptance criteria: The totals shown on reports reconcile with the filtered transaction history for the same period and classification.
+
+### Screen 10 — Monthly statement
+
+Purpose: Provide a ledger-style view that can be reviewed or exported.
+
+Required sections
+
+1. Opening balance for the selected period.
+2. Total income.
+3. Total expenses.
+4. Total transfers in and out, shown separately.
+5. Transfer fees.
+6. Loan principal received and repaid, shown separately.
+7. Closing balance.
+8. Transaction-by-transaction details.
+
+A monthly statement should be available for all wallets combined or for an individual wallet.
+
+Statement columns
+
+| Date   | Description     | Wallet | Type         | Amount  |
+| ------ | --------------- | ------ | ------------ | ------- |
+| Oct 01 | Opening balance | Cash   | Opening      | ৳3,000  |
+| Oct 02 | Groceries       | Cash   | Expense      | −৳500   |
+| Oct 04 | Cash to bKash   | Cash   | Transfer out | −৳1,000 |
+| Oct 04 | Cash to bKash   | bKash  | Transfer in  | +৳1,000 |
+
+Acceptance criteria
+
+- Opening balance + movements = closing balance for each wallet.
+- Transfer fee rows are clearly identifiable.
+- Statement totals agree with the dashboard and transaction ledger.
+- The user can export a statement as CSV; PDF can be added if desired.
+
+### Screen 11 — Categories management
+
+Purpose: Let the user customize how money is classified.
+
+### Manage categories
+
+Expenses
+
+Income
+
+Food & Groceries
+
+Transport
+
+Bills
+
+Shopping
+
+Health
+
+Add category
+
+Requirements
+
+- Separate income and expense category types.
+- Add, rename, reorder, and archive categories.
+- Assign an icon and optional color.
+- Optionally support subcategories later.
+- Keep historical transactions linked to the original category identity.
+
+Deletion behavior: Categories used in existing transactions should be archived or reassigned, not hard-deleted. Renaming a category updates its displayed name across history without altering transaction amounts.
+
+### Screen 12 — Loans, lending, and borrowing
+
+Purpose: Track money lent to others and money borrowed from others, including partial repayments.
+
+The app must support two distinct loan directions:
+
+- Money lent: Someone owes you money — a receivable.
+- Money borrowed: You owe someone money — a payable.
+
+### Loan overview
+
+People owe you
+
+## ৳ 8,000
+
+You owe others
+
+## ৳ 15,000
+
+#### Example loans
+
+Friend A
+
+Lent · Original ৳10,000
+
+Outstanding: ৳6,000
+
+Partial
+
+Person B
+
+Borrowed · Original ৳20,000
+
+Outstanding: ৳15,000
+
+Active
+
+Illustrative loan overview. Balances are mock data.
+
+Loan creation fields
+
+- Person or institution name.
+- Direction: Lent or Borrowed.
+- Principal amount.
+- Wallet used for the initial disbursement or receipt.
+- Start date and optional due date.
+- Optional interest rate and interest type.
+- Optional note, reference, and reminder date.
+
+Repayment fields
+
+- Loan.
+- Repayment date.
+- Principal portion.
+- Interest portion, if applicable.
+- Wallet used.
+- Optional note.
+
+Accounting behavior
+
+| Event                         | Wallet impact   | Income/expense classification |
+| ----------------------------- | --------------- | ----------------------------- |
+| Lend ৳5,000                   | Wallet −৳5,000  | Not an expense                |
+| Receive ৳2,000 principal back | Wallet +৳2,000  | Not income                    |
+| Borrow ৳10,000                | Wallet +৳10,000 | Not income                    |
+| Repay ৳3,000 principal        | Wallet −৳3,000  | Not an expense                |
+| Pay ৳200 interest             | Wallet −৳200    | Expense                       |
+| Receive ৳100 interest         | Wallet +৳100    | Income                        |
+
+Additional requirements
+
+- Record partial and full repayments.
+- Track remaining principal.
+- Maintain a dated loan activity ledger.
+- Prevent repayments greater than the outstanding principal plus applicable interest, unless an explicit adjustment is entered.
+- Support settled, active, and overdue states.
+- Allow corrections to repayments without double-posting wallet movements.
+
+Acceptance criteria: Outstanding principal is calculated from the loan ledger, not manually maintained as an independent balance that can drift out of sync.
+
+### Screen 13 — Wallet balance adjustment and reconciliation
+
+Purpose: Correct differences between Pocket's calculated balance and the real-world balance.
+
+This is especially useful for cash, bKash, bank accounts, and Metro Rapid Pass.
+
+Fields
+
+- Wallet.
+- Actual balance counted or checked.
+- Date/time.
+- Reason: Initial setup, missing transaction, correction, or other.
+- Optional note.
+
+Behavior
+
+- Compare actual balance with the calculated balance.
+- Display the difference before saving.
+- Record a dedicated balance adjustment transaction.
+- Do not silently rewrite old transactions.
+- Allow users to inspect and reverse prior adjustments.
+
+Acceptance criteria: Reconciliation creates an auditable correction and preserves the existing transaction history.
+
+### Screen 14 — Settings and preferences
+
+Purpose: Keep personal configuration simple and accessible.
+
+Sections
+
+- Currency and number formatting.
+- Date and time format.
+- Default wallet for new entries.
+- Default transaction date/time behavior.
+- Negative-balance warnings.
+- App theme: System, Light, Dark.
+- Optional app lock or biometric lock.
+- Export/import data.
+- Database and backup information.
+- Version and app information.
+
+Privacy requirement: No analytics, advertising SDKs, tracking SDKs, or mandatory cloud dependencies. Optional biometric protection should be device-local.
+
+### Screen 15 — Export and import
+
+Purpose: Move all personal data to a new phone without a cloud account.
+
+Export data
+
+Create a complete backup file containing transactions, wallets, categories, loans, transfer fees, settings, and required identifiers.
+
+Recommended: versioned JSON backup with optional encryption.
+
+Import data
+
+Select a Pocket backup file, validate its structure, show the backup date and record counts, then restore safely.
+
+Never silently overwrite existing data.
+
+Export CSV
+
+Export transaction history and statements for viewing in a spreadsheet. CSV is not a full backup.
+
+Backup specification
+
+- Use a versioned format, such as `pocket-backup-v1.json`.
+- Include stable IDs, relationships, timestamps, category definitions, wallet metadata, loan records, and transfer links.
+- Validate all records and referential integrity before modifying the database.
+- Use a database transaction for restoration, with rollback on failure.
+- Offer `Replace existing data` and `Cancel`; avoid merge mode in the first version.
+- If encrypted backups are supported, derive encryption keys securely from a user-provided passphrase using a recognized password-based key derivation function.
+- Never store the backup passphrase in plaintext.
+- Remind the user to keep the exported file in a safe location.
+
+Acceptance criteria
+
+- A backup restored on another device reproduces wallet balances and transaction history accurately.
+- Importing an invalid or unsupported file leaves existing data unchanged.
+- Duplicate imports cannot silently duplicate transactions.
+- The backup file is accessible through Android's system file picker and can be shared using Android's normal sharing mechanisms.
+
+## 4. Core data model and accounting rules
+
+The database design is critical because Pocket must calculate balances accurately without a server.
+
+### Recommended database entities
+
+| Entity             | Main fields                                                              |
+| ------------------ | ------------------------------------------------------------------------ |
+| Wallet             | ID, name, type, opening balance, opening date, currency, archived        |
+| Transaction        | ID, type, amount, date, wallet ID, category ID, note                     |
+| Category           | ID, name, type, icon, archived                                           |
+| Transfer           | ID, source wallet, destination wallet, principal, fee, date              |
+| Loan               | ID, person, direction, principal, date, due date, status                 |
+| Loan activity      | ID, loan ID, activity type, principal amount, interest amount, wallet ID |
+| Balance adjustment | ID, wallet ID, difference, date, reason                                  |
+| Settings           | Currency, theme, defaults, preferences                                   |
+
+Use SQLite with foreign keys enabled and database migrations for future schema updates. Keep transfer and loan relationships explicit rather than inferring them from transaction descriptions.
+
+### Source-of-truth rules
+
+1. The transaction ledger is the source of truth for money movements.
+2. Wallet balances are calculated from the opening balance, posted transactions, and adjustments.
+3. Transfers must have linked source and destination entries.
+4. Transfer fees are separate expense records linked to their transfer.
+5. Loan principal movements affect wallet balances but not income or expense totals.
+6. Editing or deleting a transaction must recalculate all dependent values.
+7. Historical reports use the transaction date, not the date the record was last edited.
+
+For performance, the app may cache calculated balances, but the cache must always be rebuildable from the ledger.
+
+### Balance calculation
+
+For each wallet:
+
+\\[ \begin{aligned} \text{Closing balance}={}&\text{Opening balance}\\\ &+\text{Money received}\\\ &-\text{Money paid}\\\ &+\text{Adjustments} \end{aligned} \\]
+
+Here, money received and paid include transfers and loan principal movements. The monthly income and expense report uses a separate classification and must not simply total every wallet inflow and outflow.
+
+## 5. Minimalist UI and design system
+
+Pocket
+
+# ৳24,850
+
+Available balance
+
+Light theme
+
+Warm white, dark text, muted green, and subtle red for expenses.
+
+Pocket
+
+# ৳24,850
+
+Available balance
+
+Dark theme
+
+Charcoal surfaces, soft contrast, and restrained accent colors.
+
+### Design rules
+
+- Use a consistent 8-point spacing system.
+- Prefer text labels over decorative illustrations.
+- Use one icon family throughout.
+- Keep forms short, with optional fields collapsed under “More details.”
+- Use bottom sheets or compact dialogs for simple selections.
+- Show amounts with consistent BDT formatting, such as `৳1,250.00`.
+- Use tabular numerals for money values.
+- Do not rely on color alone to distinguish income, expenses, or transfers.
+- Respect Android system font scaling, screen readers, and touch target sizes.
+- Avoid excessive animations, gradients, badges, and unnecessary confirmation dialogs.
+
+## 6. Technical implementation requirements
+
+Pocket Android application
+
+Screens, forms, navigation, charts
+
+Domain and accounting layer
+
+Balance calculation, transfers, fees, loans, validation
+
+Local SQLite database
+
+Persistent records, indexes, migrations, atomic writes
+
+Local backup and restore
+
+Android file picker, JSON backup, CSV export
+
+No application server, remote database, cloud authentication, or required network calls.
+
+### Recommended technology stack
+
+| Component         | Recommendation                                                       |
+| ----------------- | -------------------------------------------------------------------- |
+| Language          | Kotlin                                                               |
+| UI                | Jetpack Compose                                                      |
+| Architecture      | MVVM with a repository layer                                         |
+| Local persistence | Room over SQLite                                                     |
+| Asynchronous work | Kotlin Coroutines and Flow                                           |
+| Charts            | Lightweight Compose-compatible chart library or custom Canvas charts |
+| Backup/import     | JSON serialization and Android Storage Access Framework              |
+| Security          | Android Keystore for encryption keys; optional device authentication |
+| Testing           | JUnit, database integration tests, Compose UI tests                  |
+
+Use only the dependencies necessary for the app. The core transaction and reporting functionality must work in airplane mode.
+
+## 7. Non-functional requirements
+
+| Area                  | Requirement                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| Offline functionality | All core features work without internet                                                              |
+| Privacy               | Financial records remain on the device unless the user exports them                                  |
+| Data integrity        | Atomic writes and referential integrity for linked records                                           |
+| Performance           | Normal transaction operations should feel immediate; target under 200 ms for common local operations |
+| Reliability           | No duplicate records on retries or repeated taps                                                     |
+| Storage               | Database migrations preserve existing user data                                                      |
+| Backup                | Restore must validate data before committing                                                         |
+| Accessibility         | Screen-reader labels, scalable text, adequate contrast                                               |
+| Compatibility         | Choose and document a minimum Android API level during implementation                                |
+| Maintenance           | No backend maintenance, API keys, or recurring server costs                                          |
+
+Optional security feature: App lock is worthwhile for a personal finance app, but should be optional. It protects access to the UI; it does not replace encrypted backups or operating-system storage protections.
+
+## 8. MVP scope and development priority
+
+Pocket should launch as a useful personal finance tool, not as an overbuilt accounting package.
+
+P0 — Essential first release
+
+Required before the app is ready for personal use.
+
+- First launch and local database.
+- Home dashboard.
+- Add, edit, and delete income and expenses.
+- Wallet creation and wallet balances.
+- Wallet transfers with fixed, percentage, and manual fee options.
+- Category management.
+- Transaction history and search.
+- Monthly graph and statements.
+- Loan creation and principal repayments.
+- Complete JSON export/import and CSV export.
+- Correct accounting and balance reconciliation.
+
+P1 — Useful enhancements
+
+Add after the essential accounting flow is stable.
+
+- App lock and biometric authentication.
+- Optional encrypted backups.
+- Loan interest schedules and reminders.
+- More detailed spending trends.
+- Budget limits and spending alerts.
+- Home-screen widgets.
+- Custom transaction tags and recurring entries.
+
+Explicitly out of scope
+
+- User registration and sign-in.
+- Backend services and cloud synchronization.
+- Bank or MFS API integration.
+- Automatic SMS transaction parsing.
+- Public sharing, multi-user access, and web dashboard.
+- Ads, subscriptions, and analytics.
+
+## 9. Definition of done
+
+The app is ready for personal use when all of the following are true.
+
+### Release checklist
+
+0 of 12
+
+App starts and works fully offline, without any account.
+
+Income and expenses update wallet balances exactly once.
+
+Transfers reconcile across source and destination wallets.
+
+Transfer fees are calculated correctly and classified as expenses.
+
+Monthly reports exclude transfer principal and loan principal from income and expenses.
+
+Loan balances and partial repayments reconcile correctly.
+
+Editing, deleting, and adjusting transactions preserve data integrity.
+
+Monthly statements reconcile opening balance, movements, and closing balance.
+
+Categories and wallets can be customized without breaking history.
+
+Backup and restore work on a second Android device.
+
+Invalid imports cannot overwrite existing data.
+
+App remains usable with empty data, large transaction histories, and archived wallets.
+
+## 10. Final product recommendation
+
+Build Pocket as a local-first Android application using Kotlin, Jetpack Compose, and Room, with the accounting logic implemented and tested independently of the UI.
+
+The most important product decision is to make money movements reliable before adding advanced features. Multiple wallets, transfer charges, and loans can create subtle accounting errors if the ledger design is not correct from the beginning.
+
+For the first usable release, prioritize these four things:
+
+1. Fast entry: Record a transaction in a few taps.
+2. Trustworthy balances: Always know how much is in each wallet.
+3. Understandable reports: See where the money went each month.
+4. Safe portability: Keep complete control over personal data, including the ability to move it to another phone.
+
+That is the right foundation for a simple, private, offline personal expense tracker called Pocket.

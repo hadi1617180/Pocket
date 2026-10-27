@@ -1,0 +1,521 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isStringOfSize(value, minSize, maxSize) {
+      return value is string && value.size() >= minSize && value.size() <= maxSize;
+    }
+
+    function isOptionalString(data, key, maxSize) {
+      return !(key in data) || data[key] == null || (data[key] is string && data[key].size() <= maxSize);
+    }
+
+    function isOptionalNumber(data, key, minVal, maxVal) {
+      return !(key in data) || data[key] == null || (data[key] is number && data[key] >= minVal && data[key] <= maxVal);
+    }
+
+    function isOptionalInt(data, key, minVal, maxVal) {
+      return !(key in data) || data[key] == null || (data[key] is int && data[key] >= minVal && data[key] <= maxVal);
+    }
+
+    function isOptionalBool(data, key) {
+      return !(key in data) || data[key] == null || (data[key] is bool);
+    }
+
+    function hasValidEntityEnvelope(data, userId) {
+      return data.userId == userId
+        && data.entityId is int
+        && data.entityId >= 1
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ===============================================================
+    // Schema Validators
+    // ===============================================================
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'displayName', 'email', 'photoUrl', 'currencyCode', 'currencySymbol',
+          'themeMode', 'warnOnNegativeBalance', 'loanDeadlineNotificationEnabled',
+          'dailyExpenseReminderEnabled', 'dailyReminderHour', 'dailyReminderMinute',
+          'backgroundOpacity', 'hasCompletedOnboarding', 'syncVersion',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'displayName', 'email', 'photoUrl', 'currencyCode', 'currencySymbol',
+          'themeMode', 'defaultWalletId', 'warnOnNegativeBalance',
+          'loanDeadlineNotificationEnabled', 'dailyExpenseReminderEnabled',
+          'dailyReminderHour', 'dailyReminderMinute', 'backgroundOpacity',
+          'accentColorHex', 'masterMonthlyBudget', 'hideBalancesPrivacy',
+          'hasCompletedOnboarding', 'syncVersion', 'createdAt', 'updatedAt'
+        ])
+        && data.userId == userId
+        && isStringOfSize(data.displayName, 0, 120)
+        && isStringOfSize(data.email, 0, 254)
+        && isStringOfSize(data.photoUrl, 0, 300000)
+        && isStringOfSize(data.currencyCode, 1, 10)
+        && isStringOfSize(data.currencySymbol, 1, 10)
+        && data.themeMode in ['DARK', 'LIGHT', 'SYSTEM']
+        && isOptionalInt(data, 'defaultWalletId', 1, 9007199254740991)
+        && data.warnOnNegativeBalance is bool
+        && data.loanDeadlineNotificationEnabled is bool
+        && data.dailyExpenseReminderEnabled is bool
+        && data.dailyReminderHour is int && data.dailyReminderHour >= 0 && data.dailyReminderHour <= 23
+        && data.dailyReminderMinute is int && data.dailyReminderMinute >= 0 && data.dailyReminderMinute <= 59
+        && data.backgroundOpacity is number && data.backgroundOpacity >= 0.0 && data.backgroundOpacity <= 1.0
+        && isOptionalString(data, 'accentColorHex', 20)
+        && isOptionalNumber(data, 'masterMonthlyBudget', 0, 1000000000000)
+        && isOptionalBool(data, 'hideBalancesPrivacy')
+        && data.hasCompletedOnboarding is bool
+        && data.syncVersion is int && data.syncVersion >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCloudWallet(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'name', 'type', 'accountHint', 'openingBalance',
+          'openingDate', 'currency', 'iconName', 'colorHex', 'sortOrder',
+          'isArchived', 'includeInTotalBalance', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'name', 'type', 'accountHint', 'openingBalance',
+          'openingDate', 'currency', 'iconName', 'colorHex', 'sortOrder',
+          'isArchived', 'includeInTotalBalance', 'creditLimit', 'statementDay',
+          'paymentDueDay', 'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && isStringOfSize(data.name, 1, 100)
+        && isStringOfSize(data.type, 1, 40)
+        && isStringOfSize(data.accountHint, 0, 200)
+        && data.openingBalance is number
+        && data.openingDate is int && data.openingDate >= 0
+        && isStringOfSize(data.currency, 1, 10)
+        && isStringOfSize(data.iconName, 1, 300000)
+        && isStringOfSize(data.colorHex, 1, 20)
+        && data.sortOrder is int
+        && data.isArchived is bool
+        && data.includeInTotalBalance is bool
+        && isOptionalNumber(data, 'creditLimit', 0, 1000000000000)
+        && isOptionalInt(data, 'statementDay', 0, 31)
+        && isOptionalInt(data, 'paymentDueDay', 0, 31);
+    }
+
+    function isValidCloudCategory(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'name', 'type', 'iconName', 'colorHex',
+          'sortOrder', 'isArchived', 'isSystemFee', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'name', 'type', 'iconName', 'colorHex',
+          'sortOrder', 'isArchived', 'isSystemFee', 'monthlyBudget', 'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && isStringOfSize(data.name, 1, 100)
+        && data.type in ['INCOME', 'EXPENSE']
+        && isStringOfSize(data.iconName, 1, 100)
+        && isStringOfSize(data.colorHex, 1, 20)
+        && data.sortOrder is int
+        && data.isArchived is bool
+        && data.isSystemFee is bool
+        && isOptionalNumber(data, 'monthlyBudget', 0, 1000000000000);
+    }
+
+    function isValidCloudTransaction(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'type', 'amount', 'date', 'walletId',
+          'categoryId', 'note', 'reference', 'tags', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'type', 'amount', 'date', 'walletId',
+          'categoryId', 'note', 'reference', 'tags', 'transferId',
+          'loanActivityId', 'parentTransactionId', 'attachmentUri',
+          'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && data.type in ['INCOME', 'EXPENSE', 'EXPENSE_REVERSAL']
+        && data.amount is number && data.amount >= 0
+        && data.date is int && data.date >= 0
+        && data.walletId is int && data.walletId >= 1
+        && data.categoryId is int && data.categoryId >= 1
+        && isStringOfSize(data.note, 0, 1000)
+        && isStringOfSize(data.reference, 0, 200)
+        && isStringOfSize(data.tags, 0, 500)
+        && isOptionalInt(data, 'transferId', 1, 9007199254740991)
+        && isOptionalInt(data, 'loanActivityId', 1, 9007199254740991)
+        && isOptionalInt(data, 'parentTransactionId', 1, 9007199254740991)
+        && isOptionalString(data, 'attachmentUri', 300000);
+    }
+
+    function isValidCloudTransfer(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'sourceWalletId', 'destinationWalletId',
+          'principalAmount', 'destinationAmount', 'conversionRate', 'feeMode',
+          'fixedFeeInput', 'percentageInput', 'feeAmount', 'date', 'note',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'sourceWalletId', 'destinationWalletId',
+          'principalAmount', 'destinationAmount', 'conversionRate', 'feeMode',
+          'fixedFeeInput', 'percentageInput', 'feeAmount', 'date', 'note',
+          'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && data.sourceWalletId is int && data.sourceWalletId >= 1
+        && data.destinationWalletId is int && data.destinationWalletId >= 1
+        && data.principalAmount is number && data.principalAmount >= 0
+        && data.destinationAmount is number && data.destinationAmount >= 0
+        && data.conversionRate is number && data.conversionRate >= 0
+        && isStringOfSize(data.feeMode, 1, 50)
+        && data.fixedFeeInput is number && data.fixedFeeInput >= 0
+        && data.percentageInput is number && data.percentageInput >= 0
+        && data.feeAmount is number && data.feeAmount >= 0
+        && data.date is int && data.date >= 0
+        && isStringOfSize(data.note, 0, 1000);
+    }
+
+    function isValidCloudLoan(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'personName', 'direction', 'principalAmount',
+          'initialWalletId', 'startDate', 'interestRate', 'interestType',
+          'note', 'reference', 'isArchived', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'personName', 'direction', 'principalAmount',
+          'initialWalletId', 'startDate', 'dueDate', 'interestRate', 'interestType',
+          'note', 'reference', 'isArchived', 'attachmentUri', 'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && isStringOfSize(data.personName, 1, 150)
+        && data.direction in ['LENT', 'BORROWED']
+        && data.principalAmount is number && data.principalAmount >= 0
+        && data.initialWalletId is int && data.initialWalletId >= 1
+        && data.startDate is int && data.startDate >= 0
+        && isOptionalInt(data, 'dueDate', 0, 9007199254740991)
+        && data.interestRate is number && data.interestRate >= 0
+        && isStringOfSize(data.interestType, 1, 40)
+        && isStringOfSize(data.note, 0, 1000)
+        && isStringOfSize(data.reference, 0, 200)
+        && data.isArchived is bool
+        && isOptionalString(data, 'attachmentUri', 300000);
+    }
+
+    function isValidCloudLoanActivity(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'loanId', 'activityType', 'principalPortion',
+          'interestPortion', 'walletId', 'date', 'note', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'loanId', 'activityType', 'principalPortion',
+          'interestPortion', 'walletId', 'date', 'note', 'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && data.loanId is int && data.loanId >= 1
+        && data.activityType in ['DISBURSEMENT', 'REPAYMENT', 'ADJUSTMENT']
+        && data.principalPortion is number && data.principalPortion >= 0
+        && data.interestPortion is number && data.interestPortion >= 0
+        && data.walletId is int && data.walletId >= 1
+        && data.date is int && data.date >= 0
+        && isStringOfSize(data.note, 0, 1000);
+    }
+
+    function isValidCloudBalanceAdjustment(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'walletId', 'actualBalance',
+          'calculatedBalanceBefore', 'difference', 'date', 'reason',
+          'note', 'isReversed', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'walletId', 'actualBalance',
+          'calculatedBalanceBefore', 'difference', 'date', 'reason',
+          'note', 'isReversed', 'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && data.walletId is int && data.walletId >= 1
+        && data.actualBalance is number
+        && data.calculatedBalanceBefore is number
+        && data.difference is number
+        && data.date is int && data.date >= 0
+        && isStringOfSize(data.reason, 1, 300)
+        && isStringOfSize(data.note, 0, 1000)
+        && data.isReversed is bool;
+    }
+
+    function isValidCloudRecurringTransaction(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'title', 'type', 'amountMode', 'amount',
+          'categoryId', 'frequency', 'dayOfMonth', 'nextDueDate', 'note',
+          'isActive', 'reminderEnabled', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'title', 'type', 'amountMode', 'amount',
+          'categoryId', 'defaultWalletId', 'frequency', 'dayOfMonth',
+          'customIntervalDays', 'nextDueDate', 'lastPaidDate', 'note',
+          'isActive', 'reminderEnabled', 'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && isStringOfSize(data.title, 1, 150)
+        && data.type in ['INCOME', 'EXPENSE']
+        && data.amountMode in ['FIXED', 'MANUAL']
+        && data.amount is number && data.amount >= 0
+        && data.categoryId is int && data.categoryId >= 1
+        && isOptionalInt(data, 'defaultWalletId', 1, 9007199254740991)
+        && isStringOfSize(data.frequency, 1, 40)
+        && data.dayOfMonth is int && data.dayOfMonth >= 1 && data.dayOfMonth <= 31
+        && isOptionalInt(data, 'customIntervalDays', 1, 365)
+        && data.nextDueDate is int && data.nextDueDate >= 0
+        && isOptionalInt(data, 'lastPaidDate', 0, 9007199254740991)
+        && isStringOfSize(data.note, 0, 1000)
+        && data.isActive is bool
+        && data.reminderEnabled is bool;
+    }
+
+    function isValidCloudSavingsGoal(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'entityId', 'title', 'targetAmount', 'savedAmount',
+          'iconName', 'colorHex', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'entityId', 'title', 'targetAmount', 'savedAmount',
+          'iconName', 'colorHex', 'deadlineMillis', 'targetDate',
+          'note', 'goalCreatedAt', 'createdAt', 'updatedAt'
+        ])
+        && hasValidEntityEnvelope(data, userId)
+        && isStringOfSize(data.title, 1, 150)
+        && data.targetAmount is number && data.targetAmount >= 0
+        && data.savedAmount is number && data.savedAmount >= 0
+        && isStringOfSize(data.iconName, 1, 100)
+        && isStringOfSize(data.colorHex, 1, 20)
+        && isOptionalInt(data, 'deadlineMillis', 0, 9007199254740991)
+        && isOptionalInt(data, 'targetDate', 0, 9007199254740991)
+        && isOptionalString(data, 'note', 1000)
+        && isOptionalInt(data, 'goalCreatedAt', 0, 9007199254740991);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId)
+        && isValidUserProfile(request.resource.data, userId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && isValidUserProfile(request.resource.data, userId)
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'email', 'photoUrl', 'currencyCode', 'currencySymbol',
+          'themeMode', 'defaultWalletId', 'warnOnNegativeBalance',
+          'loanDeadlineNotificationEnabled', 'dailyExpenseReminderEnabled',
+          'dailyReminderHour', 'dailyReminderMinute', 'backgroundOpacity',
+          'accentColorHex', 'masterMonthlyBudget', 'hideBalancesPrivacy',
+          'hasCompletedOnboarding', 'syncVersion', 'updatedAt'
+        ]);
+
+      allow delete: if isOwner(userId);
+
+      // Subcollection: wallets
+      match /wallets/{walletId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudWallet(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudWallet(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'name', 'type', 'accountHint', 'openingBalance',
+            'openingDate', 'currency', 'iconName', 'colorHex', 'sortOrder',
+            'isArchived', 'includeInTotalBalance', 'creditLimit',
+            'statementDay', 'paymentDueDay', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: categories
+      match /categories/{categoryId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudCategory(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudCategory(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'name', 'type', 'iconName', 'colorHex',
+            'sortOrder', 'isArchived', 'isSystemFee', 'monthlyBudget', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: transactions
+      match /transactions/{transactionId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudTransaction(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudTransaction(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'type', 'amount', 'date', 'walletId', 'categoryId',
+            'note', 'reference', 'tags', 'transferId', 'loanActivityId',
+            'parentTransactionId', 'attachmentUri', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: transfers
+      match /transfers/{transferId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudTransfer(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudTransfer(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'sourceWalletId', 'destinationWalletId',
+            'principalAmount', 'destinationAmount', 'conversionRate',
+            'feeMode', 'fixedFeeInput', 'percentageInput', 'feeAmount',
+            'date', 'note', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: loans
+      match /loans/{loanId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudLoan(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudLoan(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'personName', 'direction', 'principalAmount',
+            'initialWalletId', 'startDate', 'dueDate', 'interestRate',
+            'interestType', 'note', 'reference', 'isArchived',
+            'attachmentUri', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: loan_activities
+      match /loan_activities/{activityId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudLoanActivity(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudLoanActivity(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'loanId', 'activityType', 'principalPortion',
+            'interestPortion', 'walletId', 'date', 'note', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: balance_adjustments
+      match /balance_adjustments/{adjustmentId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudBalanceAdjustment(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudBalanceAdjustment(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'walletId', 'actualBalance',
+            'calculatedBalanceBefore', 'difference', 'date', 'reason',
+            'note', 'isReversed', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: recurring_transactions
+      match /recurring_transactions/{recurringId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudRecurringTransaction(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudRecurringTransaction(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'title', 'type', 'amountMode', 'amount',
+            'categoryId', 'defaultWalletId', 'frequency', 'dayOfMonth',
+            'customIntervalDays', 'nextDueDate', 'lastPaidDate', 'note',
+            'isActive', 'reminderEnabled', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // Subcollection: savings_goals
+      match /savings_goals/{goalId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidCloudSavingsGoal(request.resource.data, userId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidCloudSavingsGoal(request.resource.data, userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'entityId', 'title', 'targetAmount', 'savedAmount',
+            'iconName', 'colorHex', 'deadlineMillis', 'targetDate',
+            'note', 'goalCreatedAt', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

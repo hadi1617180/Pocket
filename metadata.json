@@ -1,0 +1,6 @@
+{
+  "name": "Pocket",
+  "description": "Minimalist offline-first personal finance tracker for multiple wallets, transfers, monthly spending, statements, and loans.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

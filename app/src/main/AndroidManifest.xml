@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.provider.action.PICK_IMAGES" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="androidx.activity.result.contract.action.PICK_IMAGES" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="com.google.android.gms.provider.action.PICK_IMAGES" />
+            <data android:mimeType="image/*" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.MyApplication">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".widget.WalletWidgetConfigureActivity"
+            android:exported="true"
+            android:label="Configure Pocket Widget"
+            android:theme="@style/Theme.MyApplication">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".widget.TotalBalanceWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_total_balance_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_total_balance_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.WalletOverviewWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_wallet_overview_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_wallet_overview_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SingleWalletWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_single_wallet_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_single_wallet_info" />
+        </receiver>
+
+        <receiver
+            android:name=".notification.RecurringNotificationActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.notification.ACTION_REMIND_TOMORROW" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

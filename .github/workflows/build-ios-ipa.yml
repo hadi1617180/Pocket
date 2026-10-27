@@ -1,0 +1,159 @@
+name: Build iOS Pocket.ipa (for Sideloadly) & Deploy iOS Web App
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-ios-ipa:
+    name: Build Unsigned Pocket.ipa for Sideloadly
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate Native iOS Xcode Wrapper & Compile Unsigned .ipa
+        run: |
+          mkdir -p ios-build/PocketApp
+          cp -R ios-pocket ios-build/PocketApp/www
+
+          cat << 'EOF' > ios-build/PocketApp/AppDelegate.swift
+          import UIKit
+          import WebKit
+
+          @main
+          class AppDelegate: UIResponder, UIApplicationDelegate {
+              var window: UIWindow?
+              func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+                  let window = UIWindow(frame: UIScreen.main.bounds)
+                  window.rootViewController = PocketViewController()
+                  window.makeKeyAndVisible()
+                  self.window = window
+                  return true
+              }
+          }
+
+          class PocketViewController: UIViewController, WKUIDelegate, WKNavigationDelegate {
+              var webView: WKWebView!
+
+              override var preferredStatusBarStyle: UIStatusBarStyle {
+                  return .lightContent
+              }
+
+              override func viewDidLoad() {
+                  super.viewDidLoad()
+                  view.backgroundColor = UIColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1.0)
+
+                  let config = WKWebViewConfiguration()
+                  config.limitsNavigationsToAppBoundDomains = false
+                  config.allowsInlineMediaPlayback = true
+                  config.preferences.javaScriptCanOpenWindowsAutomatically = true
+
+                  webView = WKWebView(frame: view.bounds, configuration: config)
+                  webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                  webView.uiDelegate = self
+                  webView.navigationDelegate = self
+                  webView.scrollView.bounces = false
+                  webView.isOpaque = false
+                  webView.backgroundColor = .clear
+                  view.addSubview(webView)
+
+                  if let indexURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "www") {
+                      webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+                  }
+              }
+
+              func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+                  if let url = navigationAction.request.url,
+                     let scheme = url.scheme?.lowercased(),
+                     ["tel", "mailto", "whatsapp"].contains(scheme) || url.host?.contains("wa.me") == true || url.host?.contains("fb.me") == true {
+                      UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                      decisionHandler(.cancel)
+                      return
+                  }
+                  decisionHandler(.allow)
+              }
+          }
+          EOF
+
+          cat << 'EOF' > ios-build/PocketApp/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDisplayName</key>
+              <string>Pocket</string>
+              <key>CFBundleExecutable</key>
+              <string>Pocket</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.abdullahilhadi.pocket</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>Pocket</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>2.0.0</string>
+              <key>CFBundleVersion</key>
+              <string>2</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>UILaunchStoryboardName</key>
+              <string></string>
+              <key>UIRequiredDeviceCapabilities</key>
+              <array>
+                  <string>arm64</string>
+              </array>
+              <key>UISupportedInterfaceOrientations</key>
+              <array>
+                  <string>UIInterfaceOrientationPortrait</string>
+              </array>
+              <key>CFBundleIcons</key>
+              <dict>
+                  <key>CFBundlePrimaryIcon</key>
+                  <dict>
+                      <key>CFBundleIconFiles</key>
+                      <array>
+                          <string>AppIcon60x60</string>
+                      </array>
+                  </dict>
+              </dict>
+          </dict>
+          </plist>
+          EOF
+
+          mkdir -p ios-build/Payload/Pocket.app
+          SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun -sdk iphoneos swiftc \
+            -target arm64-apple-ios15.0 \
+            -sdk "$SDK_PATH" \
+            ios-build/PocketApp/AppDelegate.swift \
+            -o ios-build/Payload/Pocket.app/Pocket
+
+          cp ios-build/PocketApp/Info.plist ios-build/Payload/Pocket.app/Info.plist
+          cp -R ios-build/PocketApp/www ios-build/Payload/Pocket.app/www
+
+          sips -s format png -z 120 120 ios-pocket/assets/ic_pocket_logo.png --out ios-build/Payload/Pocket.app/AppIcon60x60@2x.png
+          sips -s format png -z 180 180 ios-pocket/assets/ic_pocket_logo.png --out ios-build/Payload/Pocket.app/AppIcon60x60@3x.png
+
+          cd ios-build
+          zip -r -9 Pocket.ipa Payload
+
+      - name: Upload Pocket.ipa Artifact for Sideloadly
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pocket-iOS-IPA-for-Sideloadly
+          path: ios-build/Pocket.ipa
+          retention-days: 90

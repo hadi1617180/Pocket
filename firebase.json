@@ -1,0 +1,19 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-android-pocket-90c40f1c-a604-4528-b70a-bb3c8a09d67f",
+      "rules": "firestore.rules"
+    }
+  ],
+  "emulators": {
+    "singleProjectMode": true,
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8085
+    },
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    }
+  }
+}

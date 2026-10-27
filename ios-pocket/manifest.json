@@ -1,0 +1,24 @@
+{
+  "name": "Pocket",
+  "short_name": "Pocket",
+  "description": "Personal Finance, Wallets, Khata & Expense Tracker — Developed by Abdullahil Hadi",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0F1115",
+  "theme_color": "#F15A24",
+  "icons": [
+    {
+      "src": "assets/ic_pocket_logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/ic_pocket_logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

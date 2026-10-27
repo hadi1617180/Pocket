@@ -1,0 +1,305 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile, Google account metadata, and app preferences synced across devices.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "displayName": { "type": "string", "description": "Editable display name initialized from Google account." },
+        "email": { "type": "string", "description": "Google account email address." },
+        "photoUrl": { "type": "string", "description": "Google account profile photo URL." },
+        "currencyCode": { "type": "string", "description": "Currency code (BDT)." },
+        "currencySymbol": { "type": "string", "description": "Currency symbol (৳)." },
+        "themeMode": { "type": "string", "description": "Theme preference (DARK or LIGHT)." },
+        "defaultWalletId": { "type": "integer", "description": "Default wallet ID for new transactions." },
+        "warnOnNegativeBalance": { "type": "boolean", "description": "Whether to warn on negative wallet balances." },
+        "loanDeadlineNotificationEnabled": { "type": "boolean", "description": "Whether loan deadline notifications are enabled." },
+        "dailyExpenseReminderEnabled": { "type": "boolean", "description": "Whether daily expense log reminders are enabled." },
+        "dailyReminderHour": { "type": "integer", "description": "Hour of day (0-23) for daily reminder." },
+        "dailyReminderMinute": { "type": "integer", "description": "Minute of hour (0-59) for daily reminder." },
+        "hasCompletedOnboarding": { "type": "boolean", "description": "Whether initial onboarding has been completed." },
+        "syncVersion": { "type": "integer", "description": "Monotonic sync counter for multi-device synchronization." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "currencyCode",
+        "currencySymbol",
+        "hasCompletedOnboarding",
+        "syncVersion",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudWallet": {
+      "title": "CloudWallet",
+      "description": "Synced wallet record belonging to a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "entityId": { "type": "integer", "description": "Local Room primary key ID of the wallet." },
+        "name": { "type": "string", "description": "Wallet display name." },
+        "type": { "type": "string", "description": "Wallet type enum name." },
+        "accountHint": { "type": "string", "description": "Optional account hint or subtitle." },
+        "openingBalance": { "type": "number", "description": "Initial opening balance." },
+        "openingDate": { "type": "integer", "description": "Opening date epoch millis." },
+        "currency": { "type": "string", "description": "Wallet currency code." },
+        "iconName": { "type": "string", "description": "Icon identifier." },
+        "colorHex": { "type": "string", "description": "Hex color string." },
+        "sortOrder": { "type": "integer", "description": "Display sort order." },
+        "isArchived": { "type": "boolean", "description": "Whether wallet is archived." },
+        "includeInTotalBalance": { "type": "boolean", "description": "Whether included in total available balance." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "entityId",
+        "name",
+        "type",
+        "openingBalance",
+        "openingDate",
+        "currency",
+        "iconName",
+        "colorHex",
+        "sortOrder",
+        "isArchived",
+        "includeInTotalBalance",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudCategory": {
+      "title": "CloudCategory",
+      "description": "Synced income or expense category belonging to a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "entityId": { "type": "integer", "description": "Local Room primary key ID of the category." },
+        "name": { "type": "string", "description": "Category name." },
+        "type": { "type": "string", "description": "INCOME or EXPENSE." },
+        "iconName": { "type": "string", "description": "Icon identifier." },
+        "colorHex": { "type": "string", "description": "Hex color string." },
+        "sortOrder": { "type": "integer", "description": "Display sort order." },
+        "isArchived": { "type": "boolean", "description": "Whether category is archived." },
+        "isSystemFee": { "type": "boolean", "description": "Whether category is system fee category." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "entityId",
+        "name",
+        "type",
+        "iconName",
+        "colorHex",
+        "sortOrder",
+        "isArchived",
+        "isSystemFee",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudTransaction": {
+      "title": "CloudTransaction",
+      "description": "Synced income, expense, or reversal transaction.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "entityId": { "type": "integer", "description": "Local Room primary key ID." },
+        "type": { "type": "string", "description": "INCOME, EXPENSE, or EXPENSE_REVERSAL." },
+        "amount": { "type": "number", "description": "Transaction amount." },
+        "date": { "type": "integer", "description": "Transaction timestamp in epoch millis." },
+        "walletId": { "type": "integer", "description": "Associated wallet ID." },
+        "categoryId": { "type": "integer", "description": "Associated category ID." },
+        "note": { "type": "string", "description": "Optional transaction note." },
+        "reference": { "type": "string", "description": "Optional reference code." },
+        "tags": { "type": "string", "description": "Optional comma-separated tags." },
+        "transferId": { "type": "integer", "description": "Optional linked transfer ID." },
+        "loanActivityId": { "type": "integer", "description": "Optional linked loan activity ID." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "entityId",
+        "type",
+        "amount",
+        "date",
+        "walletId",
+        "categoryId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudTransfer": {
+      "title": "CloudTransfer",
+      "description": "Synced wallet-to-wallet transfer record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "entityId": { "type": "integer", "description": "Local Room primary key ID." },
+        "sourceWalletId": { "type": "integer", "description": "Source wallet ID." },
+        "destinationWalletId": { "type": "integer", "description": "Destination wallet ID." },
+        "principalAmount": { "type": "number", "description": "Transfer principal amount." },
+        "feeMode": { "type": "string", "description": "Transfer fee mode." },
+        "fixedFeeInput": { "type": "number", "description": "Fixed fee input." },
+        "percentageInput": { "type": "number", "description": "Percentage fee input." },
+        "feeAmount": { "type": "number", "description": "Calculated fee amount." },
+        "date": { "type": "integer", "description": "Transfer date in epoch millis." },
+        "note": { "type": "string", "description": "Optional transfer note." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "entityId",
+        "sourceWalletId",
+        "destinationWalletId",
+        "principalAmount",
+        "feeMode",
+        "fixedFeeInput",
+        "percentageInput",
+        "feeAmount",
+        "date",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudLoan": {
+      "title": "CloudLoan",
+      "description": "Synced lent or borrowed loan record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "entityId": { "type": "integer", "description": "Local Room primary key ID." },
+        "personName": { "type": "string", "description": "Counterparty person name." },
+        "direction": { "type": "string", "description": "LENT or BORROWED." },
+        "principalAmount": { "type": "number", "description": "Initial loan principal." },
+        "initialWalletId": { "type": "integer", "description": "Initial disbursement/receipt wallet ID." },
+        "startDate": { "type": "integer", "description": "Start date epoch millis." },
+        "dueDate": { "type": "integer", "description": "Optional deadline epoch millis." },
+        "interestRate": { "type": "number", "description": "Interest rate." },
+        "interestType": { "type": "string", "description": "Interest calculation type." },
+        "note": { "type": "string", "description": "Optional note." },
+        "reference": { "type": "string", "description": "Optional reference." },
+        "isArchived": { "type": "boolean", "description": "Whether loan is archived." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "entityId",
+        "personName",
+        "direction",
+        "principalAmount",
+        "initialWalletId",
+        "startDate",
+        "interestRate",
+        "interestType",
+        "isArchived",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudLoanActivity": {
+      "title": "CloudLoanActivity",
+      "description": "Synced loan disbursement, repayment, or adjustment activity.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "entityId": { "type": "integer", "description": "Local Room primary key ID." },
+        "loanId": { "type": "integer", "description": "Associated loan ID." },
+        "activityType": { "type": "string", "description": "DISBURSEMENT, REPAYMENT, or ADJUSTMENT." },
+        "principalPortion": { "type": "number", "description": "Principal portion amount." },
+        "interestPortion": { "type": "number", "description": "Interest portion amount." },
+        "walletId": { "type": "integer", "description": "Wallet ID used." },
+        "date": { "type": "integer", "description": "Activity date epoch millis." },
+        "note": { "type": "string", "description": "Optional note." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "entityId",
+        "loanId",
+        "activityType",
+        "principalPortion",
+        "interestPortion",
+        "walletId",
+        "date",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudBalanceAdjustment": {
+      "title": "CloudBalanceAdjustment",
+      "description": "Synced wallet balance reconciliation adjustment.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "entityId": { "type": "integer", "description": "Local Room primary key ID." },
+        "walletId": { "type": "integer", "description": "Reconciled wallet ID." },
+        "actualBalance": { "type": "number", "description": "Actual counted balance." },
+        "calculatedBalanceBefore": { "type": "number", "description": "Calculated balance before adjustment." },
+        "difference": { "type": "number", "description": "Balance delta." },
+        "date": { "type": "integer", "description": "Adjustment date epoch millis." },
+        "reason": { "type": "string", "description": "Reconciliation reason." },
+        "note": { "type": "string", "description": "Optional note." },
+        "isReversed": { "type": "boolean", "description": "Whether adjustment was reversed." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update server timestamp." }
+      },
+      "required": [
+        "userId",
+        "entityId",
+        "walletId",
+        "actualBalance",
+        "calculatedBalanceBefore",
+        "difference",
+        "date",
+        "reason",
+        "isReversed",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Root user profile and preferences document owned by {userId}."
+    },
+    "/users/{userId}/wallets/{walletDocId}": {
+      "schema": { "$ref": "#/entities/CloudWallet" },
+      "description": "User's synced wallets subcollection."
+    },
+    "/users/{userId}/categories/{categoryDocId}": {
+      "schema": { "$ref": "#/entities/CloudCategory" },
+      "description": "User's synced categories subcollection."
+    },
+    "/users/{userId}/transactions/{transactionDocId}": {
+      "schema": { "$ref": "#/entities/CloudTransaction" },
+      "description": "User's synced transactions subcollection."
+    },
+    "/users/{userId}/transfers/{transferDocId}": {
+      "schema": { "$ref": "#/entities/CloudTransfer" },
+      "description": "User's synced transfers subcollection."
+    },
+    "/users/{userId}/loans/{loanDocId}": {
+      "schema": { "$ref": "#/entities/CloudLoan" },
+      "description": "User's synced loans subcollection."
+    },
+    "/users/{userId}/loan_activities/{activityDocId}": {
+      "schema": { "$ref": "#/entities/CloudLoanActivity" },
+      "description": "User's synced loan activities subcollection."
+    },
+    "/users/{userId}/balance_adjustments/{adjustmentDocId}": {
+      "schema": { "$ref": "#/entities/CloudBalanceAdjustment" },
+      "description": "User's synced wallet balance adjustments subcollection."
+    }
+  }
+}
