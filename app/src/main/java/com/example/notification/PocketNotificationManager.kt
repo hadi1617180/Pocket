@@ -177,7 +177,7 @@ object PocketNotificationManager {
         item: RecurringTransactionEntity,
         nowMillis: Long = System.currentTimeMillis()
     ): Boolean {
-        if (!item.isActive) return false
+        if (!item.isActive || !item.reminderEnabled) return false
         return item.nextDueDate <= endOfDayMillis(nowMillis)
     }
 
@@ -352,6 +352,36 @@ object PocketNotificationManager {
             }
         }
         prefs.edit().remove(KEY_ACTIVE_LOAN_NOTIFICATION_IDS).apply()
+    }
+
+    fun cancelAllNotifications(context: Context) {
+        val appCtx = context.applicationContext
+        cancelAllLoanNotifications(appCtx)
+        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val notificationManager = NotificationManagerCompat.from(appCtx)
+
+        val recurringIds = prefs.getStringSet(KEY_ACTIVE_RECURRING_NOTIFICATION_IDS, emptySet())
+            ?.mapNotNull { it.toLongOrNull() }
+            ?.toSet()
+            ?: emptySet()
+        recurringIds.forEach { id ->
+            runCatching { notificationManager.cancel(notificationIdForRecurring(id)) }
+        }
+
+        val cardIds = prefs.getStringSet(KEY_ACTIVE_CARD_NOTIFICATION_IDS, emptySet())
+            ?.mapNotNull { it.toLongOrNull() }
+            ?.toSet()
+            ?: emptySet()
+        cardIds.forEach { id ->
+            runCatching { notificationManager.cancel(notificationIdForCard(id)) }
+        }
+
+        runCatching { notificationManager.cancel(NOTIFICATION_ID_DAILY_EXPENSE) }
+
+        prefs.edit()
+            .remove(KEY_ACTIVE_RECURRING_NOTIFICATION_IDS)
+            .remove(KEY_ACTIVE_CARD_NOTIFICATION_IDS)
+            .apply()
     }
 
     /**
@@ -803,10 +833,13 @@ class DailyExpenseReminderWorker(
     override suspend fun doWork(): Result {
         return runCatching {
             val settings = PocketDatabase.getDatabase(applicationContext).pocketDao().getSettings()
-            if (settings == null || settings.dailyExpenseReminderEnabled) {
+            if (settings?.hasCompletedOnboarding != true) {
+                return@runCatching Result.success()
+            }
+            if (settings.dailyExpenseReminderEnabled) {
                 PocketNotificationManager.postDailyExpenseReminder(applicationContext)
             }
-            if (settings == null || settings.loanDeadlineNotificationEnabled) {
+            if (settings.loanDeadlineNotificationEnabled) {
                 PocketNotificationManager.syncLoanNotifications(applicationContext)
             }
             PocketNotificationManager.syncRecurringNotifications(applicationContext)

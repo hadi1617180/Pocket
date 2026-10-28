@@ -800,7 +800,153 @@ class ExampleRobolectricTest {
             assertTrue("Merged transactions must contain Offline Grocery Entry", merged.transactions.any { it.note == "Offline Grocery Entry" })
         }
     }
+
+    @Test
+    fun `wipeAllLocalData clears all cached device data and resets onboarding to false for Startup Page 1 or Page 2`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(context, PocketDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val dao = db.pocketDao()
+            val repo = PocketRepository(dao)
+
+            // Complete onboarding with wallets, transactions, and loans
+            repo.completeOnboarding(
+                currencyCode = "BDT",
+                currencySymbol = "৳",
+                userName = "Abdullahil Hadi",
+                profilePhotoUri = "https://example.com/photo.png",
+                selectedWallets = PocketRepository.defaultStarterWallets().take(3).map { it to 2500.0 },
+                loadSampleTransactions = true,
+                starterLoans = listOf(
+                    StarterLoanInput("Rahim", LoanDirection.LENT, 800.0, dueDate = null)
+                )
+            )
+
+            assertTrue(dao.getSettings()?.hasCompletedOnboarding == true)
+            assertTrue(dao.getAllWallets().isNotEmpty())
+            assertTrue(dao.getAllTransactions().isNotEmpty())
+            assertTrue(dao.getAllLoans().isNotEmpty())
+
+            // Simulate signing out or wiping local data when switching to a brand-new Google account
+            repo.wipeAllLocalData(
+                resetOnboardingToFalse = true,
+                userName = "",
+                profilePhotoUri = ""
+            )
+
+            val settingsAfterWipe = dao.getSettings()
+            assertNotNull(settingsAfterWipe)
+            assertFalse("Onboarding must be reset to false so user returns to Startup flow", settingsAfterWipe!!.hasCompletedOnboarding)
+            assertEquals("Default accent color must match standard preset #F15A24", "#F15A24", settingsAfterWipe.accentColorHex)
+            assertTrue("All local wallets must be wiped", dao.getAllWallets().isEmpty())
+            assertTrue("All local transactions must be wiped", dao.getAllTransactions().isEmpty())
+            assertTrue("All local transfers must be wiped", dao.getAllTransfers().isEmpty())
+            assertTrue("All local loans must be wiped", dao.getAllLoans().isEmpty())
+            assertTrue("Default categories must still be seeded", dao.getAllCategories().isNotEmpty())
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `starter existing loans preserve wallet opening balance and FK checks and migration clean up properly`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(context, PocketDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val dao = db.pocketDao()
+            val repo = PocketRepository(dao)
+
+            val starterWallets = PocketRepository.defaultStarterWallets().take(2).map { it to 1000.0 }
+            repo.completeOnboarding(
+                currencyCode = "BDT",
+                currencySymbol = "৳",
+                userName = "Hadi",
+                profilePhotoUri = "",
+                selectedWallets = starterWallets,
+                loadSampleTransactions = false,
+                starterLoans = listOf(
+                    StarterLoanInput("Karim", LoanDirection.LENT, 1500.0, dueDate = null)
+                )
+            )
+
+            val wallets = dao.getAllWallets()
+            val loans = dao.getAllLoans()
+            val activities = dao.getAllLoanActivities()
+            assertEquals(2, wallets.size)
+            assertEquals(1, loans.size)
+            assertTrue("Existing starter loan should not create fake today disbursement activity", activities.isEmpty())
+
+            val cashWallet = wallets.first()
+            val cashSummary = AccountingEngine.calculateWalletSummary(
+                wallet = cashWallet,
+                transactions = emptyList(),
+                transfers = emptyList(),
+                loans = loans,
+                loanActivities = activities,
+                adjustments = emptyList()
+            )
+            assertEquals("Cash wallet opening balance must remain 1000.0", 1000.0, cashSummary.currentBalance, 0.001)
+
+            val loanSummaries = AccountingEngine.calculateLoanSummaries(loans, activities, wallets)
+            assertEquals(1500.0, loanSummaries.first().outstandingPrincipal, 0.001)
+
+            // Verify canDirectlyDeleteWallet detects loans.initialWalletId FK
+            assertFalse("Wallet referenced by loans.initialWalletId must require migration", repo.canDirectlyDeleteWallet(cashWallet.id))
+
+            // Verify countTransactionsForCategory includes recurring_transactions
+            val cat = dao.getAllCategories().first()
+            assertEquals(0, repo.countTransactionsForCategory(cat.id))
+            val recId = repo.saveRecurringTransaction(
+                RecurringTransactionEntity(
+                    title = "Internet Bill",
+                    type = TransactionType.EXPENSE.name,
+                    amount = 1200.0,
+                    categoryId = cat.id,
+                    defaultWalletId = cashWallet.id,
+                    frequency = RecurringFrequency.MONTHLY.name,
+                    nextDueDate = System.currentTimeMillis(),
+                    reminderEnabled = false
+                )
+            )
+            assertEquals(1, repo.countTransactionsForCategory(cat.id))
+
+            val savedRec = dao.getAllRecurringTransactions().first { it.id == recId }
+            assertFalse(
+                "Recurring notification must respect reminderEnabled = false",
+                com.example.notification.PocketNotificationManager.shouldShowRecurringNotification(savedRec)
+            )
+
+            // Verify migrateAndDeleteWallet cleans up self-transfer fees and updates defaultWalletId
+            val secondWallet = wallets[1]
+            repo.saveTransfer(
+                transfer = TransferEntity(
+                    sourceWalletId = cashWallet.id,
+                    destinationWalletId = secondWallet.id,
+                    principalAmount = 200.0,
+                    feeAmount = 10.0,
+                    date = System.currentTimeMillis(),
+                    note = "Test transfer with fee"
+                ),
+                sourceWalletName = cashWallet.name,
+                destWalletName = secondWallet.name
+            )
+            assertEquals(1, dao.getAllTransfers().size)
+            assertEquals(1, dao.getAllTransactions().size) // fee transaction
+
+            repo.deleteOrMigrateWallet(cashWallet.id, secondWallet.id)
+            assertTrue("Self-transfers after migration must be removed", dao.getAllTransfers().isEmpty())
+            assertTrue("Orphan self-transfer fee transactions must be removed", dao.getAllTransactions().isEmpty())
+            assertEquals(secondWallet.id, dao.getSettings()?.defaultWalletId)
+        } finally {
+            db.close()
+        }
+    }
 }
+
 
 
 

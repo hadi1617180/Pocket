@@ -16,7 +16,9 @@ class PocketCloudSyncRepositoryRuleTest : FirestoreEmulatorTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        repository = PocketCloudSyncRepository(db)
+        if (isDbInitialized) {
+            repository = PocketCloudSyncRepository(db)
+        }
     }
 
     @Test

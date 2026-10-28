@@ -1720,6 +1720,7 @@ fun SettingsScreen(
                     isSyncing = uiState.isCloudSyncing,
                     lastSyncStatus = uiState.lastCloudSyncStatus,
                     autoAttemptSignInOnLaunch = false,
+                    confirmBeforeOfflineSignIn = false,
                     onGoogleSignedIn = { user -> viewModel.onGoogleUserSignedIn(user) },
                     onSyncNowClicked = { viewModel.syncCloudNow() },
                     onSignOutClicked = { viewModel.signOutGoogle(context) },
@@ -4287,6 +4288,9 @@ fun CloudSyncConflictDialog(
 ) {
     val pocketColors = LocalPocketColors.current
     val accountEmail = uiState.googleAccountEmail?.takeIf { it.isNotBlank() } ?: "your Google account"
+    val hasExistingCloudData = conflictSnapshot.profile.hasCompletedOnboarding ||
+        conflictSnapshot.payload.wallets.isNotEmpty() ||
+        conflictSnapshot.payload.transactions.isNotEmpty()
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = pocketColors.overlaySurface,
@@ -4312,9 +4316,16 @@ fun CloudSyncConflictDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (conflictSnapshot.payload.wallets.isNotEmpty() || conflictSnapshot.payload.transactions.isNotEmpty()) {
+                if (hasExistingCloudData) {
                     Text(
                         text = "Your Google account backup (${conflictSnapshot.payload.wallets.size} wallets, ${conflictSnapshot.payload.transactions.size} transactions) will be loaded instead.",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Text(
+                        text = "This Google account has no saved cloud data yet, so you will proceed to wallet setup after deleting local data.",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
@@ -4335,6 +4346,20 @@ fun CloudSyncConflictDialog(
                     Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Wipe Local Data & Continue", fontWeight = FontWeight.Bold)
+                }
+                if (!hasExistingCloudData) {
+                    OutlinedButton(
+                        onClick = { onChoose(CloudConflictChoice.KEEP_LOCAL) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("cloud_conflict_keep_local_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Keep & Backup Local Data to Google", fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         },

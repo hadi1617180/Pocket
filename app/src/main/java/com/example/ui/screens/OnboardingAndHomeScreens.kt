@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -21,10 +22,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Fingerprint
@@ -42,8 +45,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.data.*
+import com.example.ui.OnboardingStage
 import com.example.ui.PocketUiState
 import com.example.ui.PocketViewModel
 import com.example.ui.components.*
@@ -63,6 +68,8 @@ fun OnboardingScreen(
     onGoogleSignedIn: (com.google.firebase.auth.FirebaseUser) -> Unit = {},
     onSyncNow: () -> Unit = {},
     onSignOutGoogle: () -> Unit = {},
+    onContinueWithoutLoggingIn: () -> Unit = {},
+    onBackToPage1: () -> Unit = {},
     onComplete: (
         currencyCode: String,
         currencySymbol: String,
@@ -78,9 +85,93 @@ fun OnboardingScreen(
     val fixedCurrencyCode = "BDT"
     val fixedCurrencySymbol = "৳"
 
+    // Startup Page 1: Centered Logo, App Name ("Pocket"), "App developed by Abdullahil Hadi", and 2 Buttons
+    if (uiState.onboardingStage == OnboardingStage.PAGE_1_WELCOME) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Transparent)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 28.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 420.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                PocketBurgundyLogo(
+                    size = 96.dp,
+                    modifier = Modifier.testTag("startup_page1_logo")
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "Pocket",
+                    style = MaterialTheme.typography.displayMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (pocketColors.isDark) Color.White else Color.Black,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("startup_page1_app_name")
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "App developed by Abdullahil Hadi",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("startup_page1_subtitle_hadi")
+                )
+                Spacer(modifier = Modifier.height(36.dp))
+
+                // Button a: Sign in with Google
+                GoogleSignInPrimaryButton(
+                    isSyncing = uiState.isCloudSyncing,
+                    onGoogleSignedIn = onGoogleSignedIn
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Button b: Continue without logging in
+                OutlinedButton(
+                    onClick = onContinueWithoutLoggingIn,
+                    enabled = !uiState.isCloudSyncing,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 52.dp)
+                        .testTag("startup_page1_continue_offline_button"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(
+                        text = "Continue without logging in",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    // Startup Page 2: Wallet & Profile Setup (Sign in with Google card removed from top)
+    BackHandler {
+        onBackToPage1()
+    }
+
+    val isGoogleSignedInOnPage2 = !uiState.googleAccountEmail.isNullOrBlank() || !uiState.googleAccountName.isNullOrBlank()
+
     // 1st Section: User Name & Profile Photo (populated from Google Account when signed in, username & photo remain editable)
-    var userNameInput by remember { mutableStateOf(uiState.settings.userName.ifBlank { uiState.googleAccountName ?: "" }) }
-    var profilePhotoPath by remember { mutableStateOf(uiState.settings.profilePhotoUri.ifBlank { uiState.googleAccountPhotoUrl ?: "" }) }
+    var userNameInput by remember(uiState.googleAccountEmail, uiState.googleAccountName) {
+        mutableStateOf(uiState.settings.userName.ifBlank { uiState.googleAccountName ?: "" })
+    }
+    var profilePhotoPath by remember(uiState.googleAccountEmail, uiState.googleAccountPhotoUrl) {
+        mutableStateOf(uiState.settings.profilePhotoUri.ifBlank { uiState.googleAccountPhotoUrl ?: "" })
+    }
     var pendingCropBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
     // Automatically populate name and profile photo from Google account upon sign-in only if not already customized
@@ -165,45 +256,111 @@ fun OnboardingScreen(
             contentPadding = PaddingValues(top = 12.dp, bottom = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // App Logo + Pocket Name + "Created By Hadi"
+            // App Logo + Pocket Name + "App developed by Abdullahil Hadi" + Back / Switch Account Action
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PocketBurgundyLogo(
-                        size = 44.dp,
-                        modifier = Modifier.testTag("onboarding_app_logo")
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Pocket",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (pocketColors.isDark) Color.White else Color.Black
-                        )
-                        Text(
-                            text = "App developed by Abdullahil Hadi",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.testTag("onboarding_subtitle_hadi")
-                        )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            PocketBurgundyLogo(
+                                size = 44.dp,
+                                modifier = Modifier.testTag("onboarding_app_logo")
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Pocket",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (pocketColors.isDark) Color.White else Color.Black
+                                )
+                                Text(
+                                    text = "App developed by Abdullahil Hadi",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.testTag("onboarding_subtitle_hadi")
+                                )
+                            }
+                        }
+                        if (!isGoogleSignedInOnPage2) {
+                            TextButton(
+                                onClick = onBackToPage1,
+                                modifier = Modifier
+                                    .heightIn(min = 40.dp)
+                                    .testTag("onboarding_page2_back_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back to Startup Page 1",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Back")
+                            }
+                        }
+                    }
+
+                    if (isGoogleSignedInOnPage2) {
+                        val accountDisplay = uiState.googleAccountEmail?.takeIf { it.isNotBlank() }
+                            ?: uiState.googleAccountName?.takeIf { it.isNotBlank() }
+                            ?: "Google Account"
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("onboarding_page2_google_account_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudDone,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "Signed in as $accountDisplay",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1
+                                    )
+                                }
+                                TextButton(
+                                    onClick = onBackToPage1,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier
+                                        .heightIn(min = 36.dp)
+                                        .testTag("onboarding_page2_switch_account_button")
+                                ) {
+                                    Text(
+                                        text = "Switch account",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-            }
-
-            // Google Account Sign-In & Cloud Sync Card on Startup Page
-            item {
-                GoogleAccountSyncCard(
-                    signedInEmail = uiState.googleAccountEmail,
-                    signedInName = uiState.googleAccountName,
-                    signedInPhotoUrl = uiState.googleAccountPhotoUrl,
-                    isSyncing = uiState.isCloudSyncing,
-                    lastSyncStatus = uiState.lastCloudSyncStatus,
-                    autoAttemptSignInOnLaunch = false,
-                    onGoogleSignedIn = onGoogleSignedIn,
-                    onSyncNowClicked = onSyncNow,
-                    onSignOutClicked = onSignOutGoogle,
-                    modifier = Modifier.testTag("onboarding_google_sync_card")
-                )
             }
 
             // 1st Section: Compact User Profile Row (Avatar + Name Input + Camera Icon)

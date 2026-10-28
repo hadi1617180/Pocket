@@ -19,14 +19,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -164,7 +170,102 @@ suspend fun signOutGoogleAccount(context: Context) {
 }
 
 /**
- * Reusable Google Cloud Sync card used on both the Startup (Onboarding) screen and in Settings.
+ * Primary "Sign in with Google" button used on Startup Page 1.
+ */
+@Composable
+fun GoogleSignInPrimaryButton(
+    isSyncing: Boolean,
+    onGoogleSignedIn: (FirebaseUser) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val webClientId = remember(context) {
+        runCatching { context.getString(R.string.default_web_client_id) }.getOrDefault("")
+    }
+    var isSigningIn by remember { mutableStateOf(false) }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Button(
+            onClick = {
+                if (webClientId.isBlank()) {
+                    localErrorMessage = "Google Web Client ID is not configured."
+                    return@Button
+                }
+                localErrorMessage = null
+                isSigningIn = true
+                val activity = context.findComponentActivity() ?: context
+                scope.launch {
+                    onGoogleSignInClicked(
+                        activityContext = activity,
+                        credentialManager = credentialManager,
+                        webClientId = webClientId,
+                        onAuthSuccess = { user ->
+                            isSigningIn = false
+                            onGoogleSignedIn(user)
+                        },
+                        onAuthError = { err ->
+                            isSigningIn = false
+                            localErrorMessage = err
+                        }
+                    )
+                    isSigningIn = false
+                }
+            },
+            enabled = !isSigningIn && !isSyncing,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 52.dp)
+                .testTag("startup_page1_google_sign_in_button"),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            if (isSigningIn || isSyncing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isSyncing) "Syncing..." else "Signing in...",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.CloudQueue,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = Color.White
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Sign in with Google",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        }
+        if (!localErrorMessage.isNullOrBlank()) {
+            Text(
+                text = localErrorMessage!!,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+/**
+ * Reusable Google Cloud Sync card used in Settings.
  */
 @Composable
 fun GoogleAccountSyncCard(
@@ -174,6 +275,7 @@ fun GoogleAccountSyncCard(
     isSyncing: Boolean,
     lastSyncStatus: String?,
     autoAttemptSignInOnLaunch: Boolean = false,
+    confirmBeforeOfflineSignIn: Boolean = false,
     onGoogleSignedIn: (FirebaseUser) -> Unit,
     onSyncNowClicked: () -> Unit,
     onSignOutClicked: () -> Unit,
@@ -188,8 +290,36 @@ fun GoogleAccountSyncCard(
     }
     var isSigningIn by remember { mutableStateOf(false) }
     var localErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showOfflineWipeConfirmDialog by remember { mutableStateOf(false) }
+    var showSignOutConfirmDialog by remember { mutableStateOf(false) }
 
     val isSignedIn = !signedInEmail.isNullOrBlank() || !signedInName.isNullOrBlank()
+
+    fun launchInteractiveSignIn() {
+        if (webClientId.isBlank()) {
+            localErrorMessage = "Google Web Client ID is not configured."
+            return
+        }
+        localErrorMessage = null
+        isSigningIn = true
+        val activity = context.findComponentActivity() ?: context
+        scope.launch {
+            onGoogleSignInClicked(
+                activityContext = activity,
+                credentialManager = credentialManager,
+                webClientId = webClientId,
+                onAuthSuccess = { user ->
+                    isSigningIn = false
+                    onGoogleSignedIn(user)
+                },
+                onAuthError = { err ->
+                    isSigningIn = false
+                    localErrorMessage = err
+                }
+            )
+            isSigningIn = false
+        }
+    }
 
     LaunchedEffect(autoAttemptSignInOnLaunch, isSignedIn, webClientId) {
         if (autoAttemptSignInOnLaunch && !isSignedIn && webClientId.isNotBlank()) {
@@ -204,6 +334,122 @@ fun GoogleAccountSyncCard(
         }
     }
 
+    if (showOfflineWipeConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showOfflineWipeConfirmDialog = false },
+            containerColor = pocketColors.overlaySurface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.WarningAmber,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Switch from Offline to Google Account?",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "You are currently using Pocket without logging in. Signing in with Google will delete local offline data on this device and continue with your Google account data (or take you to wallet setup if your Google account is new).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showOfflineWipeConfirmDialog = false
+                        launchInteractiveSignIn()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("confirm_offline_wipe_sign_in_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Delete Local Data & Sign In", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showOfflineWipeConfirmDialog = false },
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("cancel_offline_wipe_sign_in_button")
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showSignOutConfirmDialog) {
+        val accountLabel = signedInEmail?.takeIf { it.isNotBlank() }
+            ?: signedInName?.takeIf { it.isNotBlank() }
+            ?: "your Google Cloud account"
+        AlertDialog(
+            onDismissRequest = { showSignOutConfirmDialog = false },
+            containerColor = pocketColors.overlaySurface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.CloudDone,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Sign Out of Google Account?",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Your wallets, transactions, and loans are safely backed up to your Google Cloud account ($accountLabel). Signing out will clear cached data from this device and return to the startup screen.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSignOutConfirmDialog = false
+                        localErrorMessage = null
+                        onSignOutClicked()
+                    },
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("confirm_google_sign_out_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Sign Out", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showSignOutConfirmDialog = false },
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("cancel_google_sign_out_button")
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     if (!isSignedIn) {
         Column(
             modifier = modifier.fillMaxWidth(),
@@ -211,28 +457,10 @@ fun GoogleAccountSyncCard(
         ) {
             Button(
                 onClick = {
-                    if (webClientId.isBlank()) {
-                        localErrorMessage = "Google Web Client ID is not configured."
-                        return@Button
-                    }
-                    localErrorMessage = null
-                    isSigningIn = true
-                    val activity = context.findComponentActivity() ?: context
-                    scope.launch {
-                        onGoogleSignInClicked(
-                            activityContext = activity,
-                            credentialManager = credentialManager,
-                            webClientId = webClientId,
-                            onAuthSuccess = { user ->
-                                isSigningIn = false
-                                onGoogleSignedIn(user)
-                            },
-                            onAuthError = { err ->
-                                isSigningIn = false
-                                localErrorMessage = err
-                            }
-                        )
-                        isSigningIn = false
+                    if (confirmBeforeOfflineSignIn) {
+                        showOfflineWipeConfirmDialog = true
+                    } else {
+                        launchInteractiveSignIn()
                     }
                 },
                 enabled = !isSigningIn && !isSyncing,
@@ -345,8 +573,7 @@ fun GoogleAccountSyncCard(
 
                 OutlinedButton(
                     onClick = {
-                        localErrorMessage = null
-                        onSignOutClicked()
+                        showSignOutConfirmDialog = true
                     },
                     enabled = !isSyncing,
                     modifier = Modifier

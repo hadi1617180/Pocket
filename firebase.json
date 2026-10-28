@@ -5,6 +5,30 @@
       "rules": "firestore.rules"
     }
   ],
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "firestore.rules",
+      "firebase-blueprint.json",
+      "**/.*",
+      "**/node_modules/**",
+      "app/**",
+      "gradle/**",
+      "build/**",
+      "*.gradle.kts",
+      "gradle.properties",
+      "debug.keystore*",
+      "metadata.json",
+      "tests/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
   "emulators": {
     "singleProjectMode": true,
     "firestore": {

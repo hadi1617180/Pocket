@@ -339,7 +339,7 @@ class PocketRepository(private val dao: PocketDao) {
                         val targetWId = allWallets.firstOrNull {
                             it.name.equals(sl.walletName, ignoreCase = true)
                         }?.id ?: defaultWId
-                        dao.createLoanAtomically(
+                        dao.insertLoan(
                             LoanEntity(
                                 personName = sl.personName.trim(),
                                 direction = sl.direction.name,
@@ -355,6 +355,16 @@ class PocketRepository(private val dao: PocketDao) {
             }
             return
         }
+
+        dao.clearAllTransactions()
+        dao.clearAllTransfers()
+        dao.clearAllLoanActivities()
+        dao.clearAllLoans()
+        dao.clearAllAdjustments()
+        dao.clearAllRecurringTransactions()
+        dao.clearAllSavingsGoals()
+        dao.clearAllWallets()
+        ensureDefaultCategoriesExist()
 
         val createdWallets = mutableListOf<Pair<String, Long>>()
         selectedWallets.forEachIndexed { index, (opt, openingBal) ->
@@ -399,7 +409,7 @@ class PocketRepository(private val dao: PocketDao) {
                     val targetWId = createdWallets.firstOrNull {
                         it.first.equals(sl.walletName, ignoreCase = true)
                     }?.second ?: fallbackWalletId
-                    dao.createLoanAtomically(
+                    dao.insertLoan(
                         LoanEntity(
                             personName = sl.personName.trim(),
                             direction = sl.direction.name,
@@ -916,9 +926,10 @@ class PocketRepository(private val dao: PocketDao) {
     suspend fun canDirectlyDeleteWallet(walletId: Long): Boolean {
         val txCount = dao.countTransactionsForWallet(walletId)
         val trCount = dao.countTransfersForWallet(walletId)
+        val loanCount = dao.countLoansForWallet(walletId)
         val laCount = dao.countLoanActivitiesForWallet(walletId)
         val adjCount = dao.countAdjustmentsForWallet(walletId)
-        return (txCount + trCount + laCount + adjCount) == 0
+        return (txCount + trCount + loanCount + laCount + adjCount) == 0
     }
 
     suspend fun deleteOrMigrateWallet(walletId: Long, migrateToWalletId: Long?) {
@@ -959,7 +970,7 @@ class PocketRepository(private val dao: PocketDao) {
     }
 
     suspend fun countTransactionsForCategory(categoryId: Long): Int {
-        return dao.countTransactionsForCategory(categoryId)
+        return dao.countTransactionsForCategory(categoryId) + dao.countRecurringForCategory(categoryId)
     }
 
     suspend fun deleteOrReassignCategory(categoryId: Long, reassignToCategoryId: Long?) {
@@ -1272,6 +1283,34 @@ class PocketRepository(private val dao: PocketDao) {
         existingWallets.forEach { wallet ->
             dao.updateWallet(wallet.copy(openingBalance = 0.0))
         }
+    }
+
+    /**
+     * Completely deletes all local wallets, transactions, transfers, loans, loan activities,
+     * balance adjustments, recurring rules, and savings goals from the device, restores
+     * default categories, and resets AppSettingsEntity (including hasCompletedOnboarding).
+     */
+    suspend fun wipeAllLocalData(
+        resetOnboardingToFalse: Boolean = true,
+        userName: String = "",
+        profilePhotoUri: String = "",
+        themeMode: String = "DARK",
+        accentColorHex: String = "#F15A24"
+    ) {
+        val cleanSettings = AppSettingsEntity(
+            id = 1,
+            currencyCode = "BDT",
+            currencySymbol = "৳",
+            themeMode = themeMode.ifBlank { "DARK" },
+            accentColorHex = accentColorHex.ifBlank { "#F15A24" },
+            hasCompletedOnboarding = !resetOnboardingToFalse,
+            userName = userName.trim(),
+            profilePhotoUri = profilePhotoUri.trim()
+        )
+        dao.clearAllDeviceDataAndSaveSettings(
+            categories = defaultCategories(),
+            settings = cleanSettings
+        )
     }
 
     // --- Backup & Restore ---

@@ -52,7 +52,12 @@ object PocketWidgetUpdater {
         return if (hideBalancesPrivacy) {
             "$symbol ••••"
         } else {
-            AccountingEngine.formatMoney(amount, symbol, includeDecimals)
+            AccountingEngine.formatMoney(
+                amount = amount,
+                symbol = symbol,
+                showSign = false,
+                includeDecimals = includeDecimals
+            )
         }
     }
 

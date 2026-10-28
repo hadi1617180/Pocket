@@ -59,9 +59,15 @@ enum class CloudConflictChoice {
     USE_CLOUD
 }
 
+enum class OnboardingStage {
+    PAGE_1_WELCOME,
+    PAGE_2_SETUP
+}
+
 data class PocketUiState(
     val isLoading: Boolean = true,
     val settings: AppSettingsEntity = AppSettingsEntity(),
+    val onboardingStage: OnboardingStage = OnboardingStage.PAGE_1_WELCOME,
     val isAppUnlocked: Boolean = true,
     val currentScreen: PocketScreen = PocketScreen.Wallets,
     val activeBottomTab: BottomNavTab = BottomNavTab.BALANCES,
@@ -150,6 +156,7 @@ class PocketViewModel(
     }
 
     private val _navStack = MutableStateFlow<List<PocketScreen>>(listOf(PocketScreen.Wallets))
+    private val _onboardingStage = MutableStateFlow(OnboardingStage.PAGE_1_WELCOME)
     private val _selectedYear = MutableStateFlow(Calendar.getInstance().get(Calendar.YEAR))
     private val _selectedMonth = MutableStateFlow(Calendar.getInstance().get(Calendar.MONTH))
     private val _selectedReportCurrency = MutableStateFlow("BDT")
@@ -186,10 +193,66 @@ class PocketViewModel(
                 if (initialSettings?.hasCompletedOnboarding == true) {
                     onGoogleUserSignedIn(existingUser, isSilentStartupRestore = true)
                 } else {
-                    // Fresh install or cleared data: stay on Startup / Onboarding screen until user explicitly signs in or sets up
+                    // Fresh install or cleared data: stay on Startup Page 1 until user explicitly signs in or continues offline
                     runCatching { com.google.firebase.auth.FirebaseAuth.getInstance().signOut() }
                 }
             }
+        }
+    }
+
+    fun continueWithoutLoggingIn(context: Context? = appContext) {
+        remoteProfileObserverJob?.cancel()
+        debouncedCloudPushJob?.cancel()
+        viewModelScope.launch {
+            if (_cloudAuthState.value.uid != null) {
+                context?.let { ctx ->
+                    com.example.ui.components.signOutGoogleAccount(ctx)
+                } ?: runCatching {
+                    com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+                }
+                _cloudAuthState.value = CloudAuthUiState()
+            }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val currentSettings = repository.buildBackupPayload().settings
+                    if (!currentSettings.hasCompletedOnboarding &&
+                        (currentSettings.userName.isNotBlank() || currentSettings.profilePhotoUri.isNotBlank())
+                    ) {
+                        repository.updateSettings(
+                            currentSettings.copy(userName = "", profilePhotoUri = "")
+                        )
+                    }
+                }
+            }
+            _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
+        }
+    }
+
+    fun returnToStartupPage1(context: Context? = appContext) {
+        remoteProfileObserverJob?.cancel()
+        debouncedCloudPushJob?.cancel()
+        viewModelScope.launch {
+            if (_cloudAuthState.value.uid != null) {
+                context?.let { ctx ->
+                    com.example.ui.components.signOutGoogleAccount(ctx)
+                } ?: runCatching {
+                    com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+                }
+                _cloudAuthState.value = CloudAuthUiState()
+            }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val currentSettings = repository.buildBackupPayload().settings
+                    if (!currentSettings.hasCompletedOnboarding &&
+                        (currentSettings.userName.isNotBlank() || currentSettings.profilePhotoUri.isNotBlank())
+                    ) {
+                        repository.updateSettings(
+                            currentSettings.copy(userName = "", profilePhotoUri = "")
+                        )
+                    }
+                }
+            }
+            _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
         }
     }
 
@@ -218,6 +281,10 @@ class PocketViewModel(
             _cloudAuthState.update { it.copy(isSyncing = true) }
             runCatching {
                 val payload = repository.buildBackupPayload()
+                if (!payload.settings.hasCompletedOnboarding) {
+                    _cloudAuthState.update { it.copy(isSyncing = false) }
+                    return@runCatching
+                }
                 val nextVersion = maxOf(System.currentTimeMillis(), lastKnownSyncVersion + 1L)
                 lastKnownSyncVersion = nextVersion
                 cloudRepo.pushLocalPayloadToCloud(
@@ -260,7 +327,8 @@ class PocketViewModel(
 
     fun onGoogleUserSignedIn(
         user: com.google.firebase.auth.FirebaseUser,
-        isSilentStartupRestore: Boolean = false
+        isSilentStartupRestore: Boolean = false,
+        confirmedOfflineWipe: Boolean = false
     ) {
         val uid = user.uid
         val googleName = user.displayName?.trim().orEmpty()
@@ -279,235 +347,394 @@ class PocketViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val currentPayload = repository.buildBackupPayload()
-            val currentSettings = currentPayload.settings
-            val hasCustomLocalPhoto = currentSettings.profilePhotoUri.isNotBlank() &&
-                !currentSettings.profilePhotoUri.startsWith("http://", ignoreCase = true) &&
-                !currentSettings.profilePhotoUri.startsWith("https://", ignoreCase = true) &&
-                (currentSettings.profilePhotoUri.startsWith("data:image/", ignoreCase = true) ||
-                    File(currentSettings.profilePhotoUri.removePrefix("CUSTOM_URI:")).exists())
-            val updatedName = currentSettings.userName.trim().ifBlank { googleName }
-            val updatedPhoto = when {
-                hasCustomLocalPhoto -> currentSettings.profilePhotoUri
-                currentSettings.profilePhotoUri.isNotBlank() -> currentSettings.profilePhotoUri
-                googlePhoto.isNotBlank() -> googlePhoto
-                else -> ""
-            }
-
-            if (updatedName != currentSettings.userName || updatedPhoto != currentSettings.profilePhotoUri) {
-                repository.updateSettings(
-                    currentSettings.copy(
-                        userName = updatedName,
-                        profilePhotoUri = updatedPhoto
-                    )
-                )
-            }
-
             val cloudRepo = cloudSyncRepository
             if (cloudRepo != null) {
-                var shouldStartObserver = true
                 runCatching {
-                    val refreshedSettings = repository.buildBackupPayload().settings
-                    val remoteSnapshot = cloudRepo.pullCloudPayloadIfPresent(uid, refreshedSettings)
-
-                    if (!isSilentStartupRestore && currentSettings.hasCompletedOnboarding) {
-                        // User used the app without logging in. Do NOT merge local data with Google account.
-                        // Show a warning that all local data will be gone forever once logged in.
-                        shouldStartObserver = false
-                        val targetSnapshot = if (remoteSnapshot != null && (remoteSnapshot.profile.hasCompletedOnboarding || remoteSnapshot.payload.wallets.isNotEmpty())) {
-                            remoteSnapshot
-                        } else {
-                            val cleanSettings = AppSettingsEntity(
-                                id = 1,
-                                currencyCode = "BDT",
-                                currencySymbol = "৳",
-                                themeMode = currentSettings.themeMode,
-                                accentColorHex = currentSettings.accentColorHex,
-                                hasCompletedOnboarding = true,
-                                userName = googleName,
-                                profilePhotoUri = googlePhoto
-                            )
-                            CloudAccountSnapshot(
-                                profile = UserProfileDoc(
-                                    docId = uid,
-                                    userId = uid,
-                                    displayName = googleName,
-                                    email = googleEmail,
-                                    photoUrl = googlePhoto,
-                                    themeMode = currentSettings.themeMode,
-                                    accentColorHex = currentSettings.accentColorHex,
-                                    hasCompletedOnboarding = true,
-                                    syncVersion = 0L
-                                ),
-                                payload = PocketBackupPayload(
-                                    formatVersion = "pocket-backup-v1",
-                                    exportedAtMillis = System.currentTimeMillis(),
-                                    wallets = emptyList(),
-                                    categories = currentPayload.categories.map { it.copy(monthlyBudget = 0.0) },
-                                    transactions = emptyList(),
-                                    transfers = emptyList(),
-                                    loans = emptyList(),
-                                    loanActivities = emptyList(),
-                                    adjustments = emptyList(),
-                                    recurringTransactions = emptyList(),
-                                    savingsGoals = emptyList(),
-                                    settings = cleanSettings
-                                )
-                            )
-                        }
-                        _cloudAuthState.update {
-                            it.copy(
-                                isSyncing = false,
-                                pendingConflict = targetSnapshot,
-                                lastSyncStatus = "Confirm switching to Google Account"
-                            )
-                        }
-                    } else if (remoteSnapshot != null && (remoteSnapshot.profile.hasCompletedOnboarding || remoteSnapshot.payload.wallets.isNotEmpty())) {
-                        isApplyingRemoteSnapshot = true
-                        try {
-                            lastKnownSyncVersion = remoteSnapshot.profile.syncVersion
-                            val finalName = remoteSnapshot.profile.displayName.trim().ifBlank { googleName.ifBlank { updatedName } }
-                            val finalPhoto = remoteSnapshot.profile.photoUrl.trim().ifBlank { googlePhoto.ifBlank { updatedPhoto } }
-                            repository.restoreBackupPayload(
-                                remoteSnapshot.payload.copy(
-                                    settings = remoteSnapshot.payload.settings.copy(
-                                        id = 1,
-                                        hasCompletedOnboarding = true,
-                                        userName = finalName,
-                                        profilePhotoUri = finalPhoto
-                                    )
-                                )
-                            )
-                        } finally {
-                            isApplyingRemoteSnapshot = false
-                        }
-                        withContext(Dispatchers.Main) {
-                            _navStack.value = listOf(PocketScreen.Wallets)
-                            if (!isSilentStartupRestore) {
-                                _statusMessage.value = "Restored account data for ${remoteSnapshot.profile.displayName.ifBlank { googleEmail }} from Google Cloud."
-                            }
-                            notifyWidgetsChanged()
-                        }
-                        _cloudAuthState.update {
-                            it.copy(
-                                isSyncing = false,
-                                pendingConflict = null,
-                                lastSyncStatus = "Synced (${remoteSnapshot.payload.wallets.size} wallets, ${remoteSnapshot.payload.transactions.size} transactions)"
-                            )
-                        }
-                    } else if (refreshedSettings.hasCompletedOnboarding) {
-                        val latestPayload = repository.buildBackupPayload()
-                        val version = System.currentTimeMillis()
-                        lastKnownSyncVersion = version
-                        cloudRepo.pushLocalPayloadToCloud(
-                            userId = uid,
-                            email = googleEmail,
-                            googleDisplayName = googleName,
-                            googlePhotoUrl = googlePhoto,
-                            payload = latestPayload,
-                            syncVersion = version
+                    val currentSettings = repository.buildBackupPayload().settings
+                    val fallbackSettings = if (isSilentStartupRestore) {
+                        currentSettings
+                    } else {
+                        AppSettingsEntity(
+                            id = 1,
+                            currencyCode = currentSettings.currencyCode,
+                            currencySymbol = currentSettings.currencySymbol,
+                            themeMode = currentSettings.themeMode,
+                            accentColorHex = currentSettings.accentColorHex
                         )
-                        withContext(Dispatchers.Main) {
-                            if (!isSilentStartupRestore) {
-                                _statusMessage.value = "Signed in as ${googleName.ifBlank { googleEmail }} and backed up data to Google Cloud."
-                            }
-                        }
+                    }
+                    val remoteSnapshot = cloudRepo.pullCloudPayloadIfPresent(uid, fallbackSettings)
+                    val shouldObserve = applyGoogleAccountSignInResult(
+                        uid = uid,
+                        googleName = googleName,
+                        googleEmail = googleEmail,
+                        googlePhoto = googlePhoto,
+                        remoteSnapshot = remoteSnapshot,
+                        isSilentStartupRestore = isSilentStartupRestore,
+                        confirmedOfflineWipe = confirmedOfflineWipe
+                    )
+                    if (shouldObserve) {
+                        startObservingRemoteProfile(uid)
+                    }
+                }.onFailure { err ->
+                    val currentSettings = repository.buildBackupPayload().settings
+                    if (!currentSettings.hasCompletedOnboarding) {
+                        // On Startup Page 1: advance to Startup Page 2 with Google profile info
+                        repository.updateSettings(
+                            currentSettings.copy(
+                                userName = currentSettings.userName.ifBlank { googleName },
+                                profilePhotoUri = currentSettings.profilePhotoUri.ifBlank { googlePhoto }
+                            )
+                        )
+                        _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
                         _cloudAuthState.update {
                             it.copy(
                                 isSyncing = false,
-                                pendingConflict = null,
-                                lastSyncStatus = "Backed up to Google Cloud"
+                                lastSyncStatus = "Signed in (${err.localizedMessage ?: "cloud sync pending"})"
                             )
+                        }
+                    } else if (!isSilentStartupRestore) {
+                        // Offline user in Settings could not reach Google Cloud: do not mix offline data with cloud account
+                        appContext?.let { ctx ->
+                            com.example.ui.components.signOutGoogleAccount(ctx)
+                        } ?: runCatching {
+                            com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+                        }
+                        _cloudAuthState.value = CloudAuthUiState()
+                        withContext(Dispatchers.Main) {
+                            _statusMessage.value = "Could not connect to Google Cloud (${err.localizedMessage ?: "network error"}). Local data kept intact."
                         }
                     } else {
                         _cloudAuthState.update {
                             it.copy(
                                 isSyncing = false,
-                                pendingConflict = null,
-                                lastSyncStatus = "Signed in as ${googleName.ifBlank { googleEmail }}"
+                                lastSyncStatus = "Signed in (${err.localizedMessage ?: "cloud sync pending"})"
                             )
                         }
                     }
-                }.onFailure { err ->
-                    _cloudAuthState.update {
-                        it.copy(
-                            isSyncing = false,
-                            lastSyncStatus = "Signed in (${err.localizedMessage ?: "cloud sync pending"})"
-                        )
-                    }
-                }
-
-                if (shouldStartObserver) {
-                    startObservingRemoteProfile(uid)
                 }
             } else {
-                _cloudAuthState.update {
-                    it.copy(isSyncing = false, lastSyncStatus = "Signed in with Google")
+                val shouldObserve = applyGoogleAccountSignInResult(
+                    uid = uid,
+                    googleName = googleName,
+                    googleEmail = googleEmail,
+                    googlePhoto = googlePhoto,
+                    remoteSnapshot = null,
+                    isSilentStartupRestore = isSilentStartupRestore,
+                    confirmedOfflineWipe = confirmedOfflineWipe
+                )
+                if (shouldObserve) {
+                    startObservingRemoteProfile(uid)
                 }
             }
         }
+    }
+
+    suspend fun applyGoogleAccountSignInResult(
+        uid: String,
+        googleName: String,
+        googleEmail: String,
+        googlePhoto: String,
+        remoteSnapshot: CloudAccountSnapshot?,
+        isSilentStartupRestore: Boolean = false,
+        confirmedOfflineWipe: Boolean = false
+    ): Boolean {
+        _cloudAuthState.update {
+            it.copy(
+                uid = uid,
+                email = googleEmail,
+                displayName = googleName,
+                photoUrl = googlePhoto
+            )
+        }
+
+        val currentPayload = repository.buildBackupPayload()
+        val currentSettings = currentPayload.settings
+        val hasCustomLocalPhoto = currentSettings.profilePhotoUri.isNotBlank() &&
+            !currentSettings.profilePhotoUri.startsWith("http://", ignoreCase = true) &&
+            !currentSettings.profilePhotoUri.startsWith("https://", ignoreCase = true) &&
+            (currentSettings.profilePhotoUri.startsWith("data:image/", ignoreCase = true) ||
+                File(currentSettings.profilePhotoUri.removePrefix("CUSTOM_URI:")).exists())
+        val updatedName = currentSettings.userName.trim().ifBlank { googleName }
+        val updatedPhoto = when {
+            hasCustomLocalPhoto -> currentSettings.profilePhotoUri
+            currentSettings.profilePhotoUri.isNotBlank() -> currentSettings.profilePhotoUri
+            googlePhoto.isNotBlank() -> googlePhoto
+            else -> ""
+        }
+
+        val hasExistingCloudData = remoteSnapshot != null &&
+            (remoteSnapshot.profile.hasCompletedOnboarding || remoteSnapshot.payload.wallets.isNotEmpty())
+
+        // 1. Offline user signing in from Settings without prior wipe confirmation -> prompt confirmation dialog
+        if (!isSilentStartupRestore && currentSettings.hasCompletedOnboarding && !confirmedOfflineWipe) {
+            val targetSnapshot = if (hasExistingCloudData && remoteSnapshot != null) {
+                remoteSnapshot
+            } else {
+                val cleanSettings = AppSettingsEntity(
+                    id = 1,
+                    currencyCode = "BDT",
+                    currencySymbol = "৳",
+                    themeMode = currentSettings.themeMode,
+                    accentColorHex = currentSettings.accentColorHex,
+                    hasCompletedOnboarding = false,
+                    userName = googleName,
+                    profilePhotoUri = googlePhoto
+                )
+                CloudAccountSnapshot(
+                    profile = UserProfileDoc(
+                        docId = uid,
+                        userId = uid,
+                        displayName = googleName,
+                        email = googleEmail,
+                        photoUrl = googlePhoto,
+                        themeMode = currentSettings.themeMode,
+                        accentColorHex = currentSettings.accentColorHex,
+                        hasCompletedOnboarding = false,
+                        syncVersion = 0L
+                    ),
+                    payload = PocketBackupPayload(
+                        formatVersion = "pocket-backup-v1",
+                        exportedAtMillis = System.currentTimeMillis(),
+                        wallets = emptyList(),
+                        categories = PocketRepository.defaultCategories(),
+                        transactions = emptyList(),
+                        transfers = emptyList(),
+                        loans = emptyList(),
+                        loanActivities = emptyList(),
+                        adjustments = emptyList(),
+                        recurringTransactions = emptyList(),
+                        savingsGoals = emptyList(),
+                        settings = cleanSettings
+                    )
+                )
+            }
+            _cloudAuthState.update {
+                it.copy(
+                    isSyncing = false,
+                    pendingConflict = targetSnapshot,
+                    lastSyncStatus = "Confirm switching to Google Account"
+                )
+            }
+            return false
+        }
+
+        // 2. Existing Google Account with cloud data -> Restore cloud data and open Home page
+        if (hasExistingCloudData && remoteSnapshot != null) {
+            isApplyingRemoteSnapshot = true
+            try {
+                lastKnownSyncVersion = remoteSnapshot.profile.syncVersion
+                val finalName = remoteSnapshot.profile.displayName.trim().ifBlank { googleName.ifBlank { updatedName } }
+                val finalPhoto = remoteSnapshot.profile.photoUrl.trim().ifBlank { googlePhoto.ifBlank { updatedPhoto } }
+                repository.restoreBackupPayload(
+                    remoteSnapshot.payload.copy(
+                        settings = remoteSnapshot.payload.settings.copy(
+                            id = 1,
+                            hasCompletedOnboarding = true,
+                            userName = finalName,
+                            profilePhotoUri = finalPhoto
+                        )
+                    )
+                )
+            } finally {
+                isApplyingRemoteSnapshot = false
+            }
+            _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
+            withContext(Dispatchers.Main) {
+                _navStack.value = listOf(PocketScreen.Wallets)
+                if (!isSilentStartupRestore) {
+                    _statusMessage.value = "Restored account data for ${remoteSnapshot.profile.displayName.ifBlank { googleEmail }} from Google Cloud."
+                }
+                notifyWidgetsChanged()
+            }
+            _cloudAuthState.update {
+                it.copy(
+                    isSyncing = false,
+                    pendingConflict = null,
+                    lastSyncStatus = "Synced (${remoteSnapshot.payload.wallets.size} wallets, ${remoteSnapshot.payload.transactions.size} transactions)"
+                )
+            }
+            return true
+        }
+
+        // 3. Silent startup restore when cloud is empty (e.g. first cloud push pending)
+        if (isSilentStartupRestore && currentSettings.hasCompletedOnboarding) {
+            val cloudRepo = cloudSyncRepository
+            if (cloudRepo != null) {
+                val latestPayload = repository.buildBackupPayload()
+                val version = System.currentTimeMillis()
+                lastKnownSyncVersion = version
+                cloudRepo.pushLocalPayloadToCloud(
+                    userId = uid,
+                    email = googleEmail,
+                    googleDisplayName = googleName,
+                    googlePhotoUrl = googlePhoto,
+                    payload = latestPayload,
+                    syncVersion = version
+                )
+            }
+            _cloudAuthState.update {
+                it.copy(
+                    isSyncing = false,
+                    pendingConflict = null,
+                    lastSyncStatus = "Backed up to Google Cloud"
+                )
+            }
+            return true
+        }
+
+        // 4. Brand-new Google Account (either from Startup Page 1 OR from Settings after confirming offline wipe)
+        // Wipe local data, pre-fill Google user name & photo, and navigate to Startup Page 2 to set up wallets
+        isApplyingRemoteSnapshot = true
+        try {
+            repository.wipeAllLocalData(
+                resetOnboardingToFalse = true,
+                userName = googleName,
+                profilePhotoUri = googlePhoto,
+                themeMode = currentSettings.themeMode,
+                accentColorHex = currentSettings.accentColorHex
+            )
+        } finally {
+            isApplyingRemoteSnapshot = false
+        }
+        _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
+        _cloudAuthState.update {
+            it.copy(
+                isSyncing = false,
+                pendingConflict = null,
+                lastSyncStatus = "Signed in as ${googleName.ifBlank { googleEmail }}"
+            )
+        }
+        withContext(Dispatchers.Main) {
+            _navStack.value = listOf(PocketScreen.Wallets)
+            if (confirmedOfflineWipe) {
+                _statusMessage.value = "Local data deleted. Set up wallets for ${googleName.ifBlank { googleEmail }}."
+            }
+            appContext?.let { ctx ->
+                PocketNotificationManager.cancelAllNotifications(ctx)
+                PocketWidgetUpdater.refreshAllWidgets(ctx)
+            }
+        }
+        return true
     }
 
     fun resolveCloudSyncConflict(choice: CloudConflictChoice) {
         val authState = _cloudAuthState.value
         val conflictSnapshot = authState.pendingConflict ?: return
         val uid = authState.uid ?: return
-        val cloudRepo = cloudSyncRepository
 
         _cloudAuthState.update {
             it.copy(isSyncing = true, pendingConflict = null, lastSyncStatus = "Switching to Google Account...")
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val targetPayload = conflictSnapshot.payload.copy(
-                settings = conflictSnapshot.payload.settings.copy(
+            val hasCloudData = conflictSnapshot.profile.hasCompletedOnboarding ||
+                conflictSnapshot.payload.wallets.isNotEmpty()
+
+            if (choice == CloudConflictChoice.KEEP_LOCAL && !hasCloudData) {
+                // Brand-new Google account: user chose to link & back up their current offline data to this new account
+                val currentPayload = repository.buildBackupPayload()
+                val updatedSettings = currentPayload.settings.copy(
                     id = 1,
                     hasCompletedOnboarding = true,
-                    userName = conflictSnapshot.profile.displayName.ifBlank { authState.displayName.orEmpty() },
-                    profilePhotoUri = conflictSnapshot.profile.photoUrl.ifBlank { authState.photoUrl.orEmpty() }
+                    userName = currentPayload.settings.userName.ifBlank { authState.displayName.orEmpty() },
+                    profilePhotoUri = currentPayload.settings.profilePhotoUri.ifBlank { authState.photoUrl.orEmpty() }
                 )
-            )
-
-            isApplyingRemoteSnapshot = true
-            try {
-                repository.restoreBackupPayload(targetPayload)
-            } finally {
-                isApplyingRemoteSnapshot = false
-            }
-
-            if (cloudRepo != null && conflictSnapshot.profile.syncVersion == 0L) {
-                runCatching {
-                    val nextVersion = System.currentTimeMillis()
-                    lastKnownSyncVersion = nextVersion
-                    cloudRepo.pushLocalPayloadToCloud(
-                        userId = uid,
-                        email = authState.email ?: "",
-                        googleDisplayName = authState.displayName ?: "",
-                        googlePhotoUrl = authState.photoUrl ?: "",
-                        payload = targetPayload,
-                        syncVersion = nextVersion
+                repository.updateSettings(updatedSettings)
+                val payloadToUpload = currentPayload.copy(settings = updatedSettings)
+                val cloudRepo = cloudSyncRepository
+                if (cloudRepo != null) {
+                    runCatching {
+                        val nextVersion = maxOf(System.currentTimeMillis(), lastKnownSyncVersion + 1L)
+                        lastKnownSyncVersion = nextVersion
+                        cloudRepo.pushLocalPayloadToCloud(
+                            userId = uid,
+                            email = authState.email.orEmpty(),
+                            googleDisplayName = authState.displayName.orEmpty(),
+                            googlePhotoUrl = authState.photoUrl.orEmpty(),
+                            payload = payloadToUpload,
+                            syncVersion = nextVersion
+                        )
+                    }
+                }
+                _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
+                startObservingRemoteProfile(uid)
+                _cloudAuthState.update {
+                    it.copy(
+                        isSyncing = false,
+                        pendingConflict = null,
+                        lastSyncStatus = "Backed up (${payloadToUpload.wallets.size} wallets, ${payloadToUpload.transactions.size} transactions)"
                     )
                 }
-            } else {
-                lastKnownSyncVersion = conflictSnapshot.profile.syncVersion
-            }
-
-            startObservingRemoteProfile(uid)
-
-            val summaryMsg = "Local data cleared. Switched to Google Account (${targetPayload.wallets.size} wallets, ${targetPayload.transactions.size} transactions)."
-
-            _cloudAuthState.update {
-                it.copy(
-                    isSyncing = false,
-                    pendingConflict = null,
-                    lastSyncStatus = "Synced (${targetPayload.wallets.size} wallets, ${targetPayload.transactions.size} transactions)"
+                withContext(Dispatchers.Main) {
+                    _statusMessage.value = "Backed up your local wallets and transactions to ${authState.email?.ifBlank { authState.displayName } ?: "Google Cloud"}."
+                    notifyWidgetsChanged()
+                }
+            } else if (hasCloudData) {
+                val targetPayload = conflictSnapshot.payload.copy(
+                    settings = conflictSnapshot.payload.settings.copy(
+                        id = 1,
+                        hasCompletedOnboarding = true,
+                        userName = conflictSnapshot.profile.displayName.ifBlank { authState.displayName.orEmpty() },
+                        profilePhotoUri = conflictSnapshot.profile.photoUrl.ifBlank { authState.photoUrl.orEmpty() }
+                    )
                 )
-            }
 
-            withContext(Dispatchers.Main) {
-                _navStack.value = listOf(PocketScreen.Wallets)
-                _statusMessage.value = summaryMsg
-                notifyWidgetsChanged()
+                isApplyingRemoteSnapshot = true
+                try {
+                    repository.restoreBackupPayload(targetPayload)
+                } finally {
+                    isApplyingRemoteSnapshot = false
+                }
+                lastKnownSyncVersion = conflictSnapshot.profile.syncVersion
+                _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
+                startObservingRemoteProfile(uid)
+
+                val summaryMsg = "Local data deleted. Switched to Google Account (${targetPayload.wallets.size} wallets, ${targetPayload.transactions.size} transactions)."
+                _cloudAuthState.update {
+                    it.copy(
+                        isSyncing = false,
+                        pendingConflict = null,
+                        lastSyncStatus = "Synced (${targetPayload.wallets.size} wallets, ${targetPayload.transactions.size} transactions)"
+                    )
+                }
+                withContext(Dispatchers.Main) {
+                    _navStack.value = listOf(PocketScreen.Wallets)
+                    _statusMessage.value = summaryMsg
+                    notifyWidgetsChanged()
+                }
+            } else {
+                // Brand-new Google account: wipe local data and go to Startup Page 2 to set up wallets
+                isApplyingRemoteSnapshot = true
+                try {
+                    repository.wipeAllLocalData(
+                        resetOnboardingToFalse = true,
+                        userName = conflictSnapshot.profile.displayName.ifBlank { authState.displayName.orEmpty() },
+                        profilePhotoUri = conflictSnapshot.profile.photoUrl.ifBlank { authState.photoUrl.orEmpty() },
+                        themeMode = conflictSnapshot.payload.settings.themeMode,
+                        accentColorHex = conflictSnapshot.payload.settings.accentColorHex
+                    )
+                } finally {
+                    isApplyingRemoteSnapshot = false
+                }
+                lastKnownSyncVersion = 0L
+                _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
+                startObservingRemoteProfile(uid)
+
+                _cloudAuthState.update {
+                    it.copy(
+                        isSyncing = false,
+                        pendingConflict = null,
+                        lastSyncStatus = "Signed in as ${authState.displayName?.ifBlank { authState.email } ?: "Google Account"}"
+                    )
+                }
+                withContext(Dispatchers.Main) {
+                    _navStack.value = listOf(PocketScreen.Wallets)
+                    _statusMessage.value = "Local data deleted. Set up wallets for your Google Account."
+                    appContext?.let { ctx ->
+                        PocketNotificationManager.cancelAllNotifications(ctx)
+                        PocketWidgetUpdater.refreshAllWidgets(ctx)
+                    }
+                }
             }
         }
     }
@@ -607,12 +834,56 @@ class PocketViewModel(
     }
 
     fun signOutGoogle(context: Context) {
+        val appCtx = context.applicationContext
+        val hadPendingPush = debouncedCloudPushJob?.isActive == true
+        val activeAuthState = _cloudAuthState.value
         remoteProfileObserverJob?.cancel()
         debouncedCloudPushJob?.cancel()
         viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val uid = activeAuthState.uid
+                val cloudRepo = cloudSyncRepository
+                if (hadPendingPush && uid != null && cloudRepo != null && !isApplyingRemoteSnapshot) {
+                    runCatching {
+                        val payload = repository.buildBackupPayload()
+                        if (payload.settings.hasCompletedOnboarding) {
+                            val nextVersion = maxOf(System.currentTimeMillis(), lastKnownSyncVersion + 1L)
+                            lastKnownSyncVersion = nextVersion
+                            cloudRepo.pushLocalPayloadToCloud(
+                                userId = uid,
+                                email = activeAuthState.email.orEmpty(),
+                                googleDisplayName = activeAuthState.displayName.orEmpty(),
+                                googlePhotoUrl = activeAuthState.photoUrl.orEmpty(),
+                                payload = payload,
+                                syncVersion = nextVersion
+                            )
+                        }
+                    }
+                }
+            }
             com.example.ui.components.signOutGoogleAccount(context)
+            withContext(Dispatchers.IO) {
+                isApplyingRemoteSnapshot = true
+                try {
+                    val currentSettings = repository.buildBackupPayload().settings
+                    repository.wipeAllLocalData(
+                        resetOnboardingToFalse = true,
+                        userName = "",
+                        profilePhotoUri = "",
+                        themeMode = currentSettings.themeMode,
+                        accentColorHex = currentSettings.accentColorHex
+                    )
+                    PocketNotificationManager.cancelAllNotifications(appCtx)
+                } finally {
+                    isApplyingRemoteSnapshot = false
+                }
+            }
+            lastKnownSyncVersion = 0L
             _cloudAuthState.value = CloudAuthUiState()
-            _statusMessage.value = "Signed out of Google Cloud Sync. Local data remains on this device."
+            _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
+            _navStack.value = listOf(PocketScreen.Wallets)
+            PocketWidgetUpdater.refreshAllWidgets(appCtx)
+            _statusMessage.value = "Signed out of Google Account. Cached device data cleared."
         }
     }
 
@@ -648,8 +919,14 @@ class PocketViewModel(
         _navStack,
         _selectedYear,
         _selectedMonth,
-        combine(_isAppUnlocked, _statusMessage, _cloudAuthState, _pendingRecurringPayId, _selectedReportCurrency) { u, m, c, p, rc ->
-            listOf(u, m, c, p, rc)
+        combine(
+            _isAppUnlocked,
+            _statusMessage,
+            _cloudAuthState,
+            _pendingRecurringPayId,
+            combine(_selectedReportCurrency, _onboardingStage) { rc, stage -> rc to stage }
+        ) { u, m, c, p, rcAndStage ->
+            listOf(u, m, c, p, rcAndStage.first, rcAndStage.second)
         }
     ) { db, navStack, year, month, extraList ->
         val unlocked = extraList[0] as Boolean
@@ -657,6 +934,7 @@ class PocketViewModel(
         val cloudAuth = extraList[2] as CloudAuthUiState
         val pendingRecurringId = extraList[3] as Long?
         val requestedReportCurrency = (extraList[4] as String).ifBlank { "BDT" }
+        val onboardingStage = extraList[5] as OnboardingStage
         val rawSettings = db.settings ?: AppSettingsEntity()
         val settings = rawSettings.copy(currencyCode = "BDT", currencySymbol = "৳")
         val effectiveUnlocked = !settings.appLockEnabled || settings.appLockPin.isBlank() || unlocked
@@ -747,6 +1025,7 @@ class PocketViewModel(
         PocketUiState(
             isLoading = false,
             settings = settings,
+            onboardingStage = onboardingStage,
             isAppUnlocked = effectiveUnlocked,
             currentScreen = currentScreen,
             activeBottomTab = bottomTab,
@@ -904,16 +1183,22 @@ class PocketViewModel(
         profilePhotoUri: String = ""
     ) {
         viewModelScope.launch {
-            repository.completeOnboarding(
-                currencyCode = "BDT",
-                currencySymbol = "৳",
-                selectedWallets = selectedWallets,
-                loadSampleTransactions = loadSampleTransactions,
-                starterLoans = starterLoans,
-                userName = userName,
-                profilePhotoUri = profilePhotoUri
-            )
+            withContext(Dispatchers.IO) {
+                repository.completeOnboarding(
+                    currencyCode = "BDT",
+                    currencySymbol = "৳",
+                    selectedWallets = selectedWallets,
+                    loadSampleTransactions = loadSampleTransactions,
+                    starterLoans = starterLoans,
+                    userName = userName,
+                    profilePhotoUri = profilePhotoUri
+                )
+            }
+            _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
             _navStack.value = listOf(PocketScreen.Wallets)
+            _cloudAuthState.value.uid?.let { uid ->
+                startObservingRemoteProfile(uid)
+            }
             notifyWidgetsChanged()
         }
     }
@@ -1219,7 +1504,8 @@ class PocketViewModel(
                     id = 0L,
                     date = System.currentTimeMillis(),
                     transferId = null,
-                    loanActivityId = null
+                    loanActivityId = null,
+                    parentTransactionId = null
                 )
             )
             _statusMessage.value = "Transaction duplicated."
@@ -1577,7 +1863,7 @@ class PocketViewModel(
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 repository.resetAllFinancialDataToZero()
-                PocketNotificationManager.cancelAllLoanNotifications(appCtx)
+                PocketNotificationManager.cancelAllNotifications(appCtx)
             }
             notifyWidgetsChanged()
             _statusMessage.value = "All income, expenses, loans, transfers, and wallet balances have been reset to 0."

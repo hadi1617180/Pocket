@@ -36,6 +36,9 @@ interface PocketDao {
     @Query("SELECT COUNT(*) FROM transfers WHERE sourceWalletId = :walletId OR destinationWalletId = :walletId")
     suspend fun countTransfersForWallet(walletId: Long): Int
 
+    @Query("SELECT COUNT(*) FROM loans WHERE initialWalletId = :walletId")
+    suspend fun countLoansForWallet(walletId: Long): Int
+
     @Query("SELECT COUNT(*) FROM loan_activities WHERE walletId = :walletId")
     suspend fun countLoanActivitiesForWallet(walletId: Long): Int
 
@@ -51,6 +54,8 @@ interface PocketDao {
         reassignWalletLoanActivities(fromWalletId, toWalletId)
         reassignWalletAdjustments(fromWalletId, toWalletId)
         reassignWalletRecurringDefault(fromWalletId, toWalletId)
+        reassignSettingsDefaultWallet(fromWalletId, toWalletId)
+        deleteSelfTransferFeesAfterMigration()
         deleteSelfTransfersAfterMigration()
         deleteWalletById(fromWalletId)
     }
@@ -75,6 +80,12 @@ interface PocketDao {
 
     @Query("UPDATE recurring_transactions SET defaultWalletId = :toWalletId WHERE defaultWalletId = :fromWalletId")
     suspend fun reassignWalletRecurringDefault(fromWalletId: Long, toWalletId: Long)
+
+    @Query("UPDATE app_settings SET defaultWalletId = :toWalletId WHERE defaultWalletId = :fromWalletId")
+    suspend fun reassignSettingsDefaultWallet(fromWalletId: Long, toWalletId: Long)
+
+    @Query("DELETE FROM transactions WHERE transferId IN (SELECT id FROM transfers WHERE sourceWalletId = destinationWalletId)")
+    suspend fun deleteSelfTransferFeesAfterMigration()
 
     @Query("DELETE FROM transfers WHERE sourceWalletId = destinationWalletId")
     suspend fun deleteSelfTransfersAfterMigration()
@@ -443,6 +454,17 @@ interface PocketDao {
         clearAllCategories()
         clearAllWallets()
 
+        val validWalletIds = wallets.map { it.id }.toSet()
+        val validCategoryIds = categories.map { it.id }.toSet()
+        val fallbackCategoryId = categories.firstOrNull()?.id
+
+        val safeRecurring = recurringTransactions.mapNotNull { rec ->
+            val safeCatId = if (rec.categoryId in validCategoryIds) rec.categoryId else fallbackCategoryId ?: return@mapNotNull null
+            val safeWalId = rec.defaultWalletId?.takeIf { it in validWalletIds }
+            rec.copy(categoryId = safeCatId, defaultWalletId = safeWalId)
+        }
+        val safeDefaultWalletId = settings.defaultWalletId?.takeIf { it in validWalletIds } ?: wallets.firstOrNull()?.id
+
         insertWallets(wallets)
         insertCategories(categories)
         insertTransfers(transfers)
@@ -450,9 +472,28 @@ interface PocketDao {
         insertLoanActivities(loanActivities)
         insertTransactions(transactions)
         insertBalanceAdjustments(adjustments)
-        insertRecurringTransactions(recurringTransactions)
+        insertRecurringTransactions(safeRecurring)
         insertSavingsGoals(savingsGoals)
-        saveSettings(settings.copy(id = 1, hasCompletedOnboarding = true))
+        saveSettings(settings.copy(id = 1, defaultWalletId = safeDefaultWalletId, hasCompletedOnboarding = true))
+    }
+
+    @Transaction
+    suspend fun clearAllDeviceDataAndSaveSettings(
+        categories: List<CategoryEntity>,
+        settings: AppSettingsEntity
+    ) {
+        clearAllTransactions()
+        clearAllTransfers()
+        clearAllLoanActivities()
+        clearAllLoans()
+        clearAllAdjustments()
+        clearAllRecurringTransactions()
+        clearAllSavingsGoals()
+        clearAllCategories()
+        clearAllWallets()
+
+        insertCategories(categories)
+        saveSettings(settings.copy(id = 1))
     }
 }
 

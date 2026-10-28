@@ -1,11 +1,11 @@
 {
   "name": "Pocket",
   "short_name": "Pocket",
-  "description": "Personal Finance, Wallets, Khata & Expense Tracker — Developed by Abdullahil Hadi",
+  "description": "Personal Finance, Wallets, Khata & Expense Tracker — App developed by Abdullahil Hadi",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0F1115",
+  "background_color": "#000000",
   "theme_color": "#F15A24",
   "icons": [
     {

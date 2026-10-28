@@ -33,9 +33,22 @@ abstract class FirestoreEmulatorTestBase {
     protected lateinit var auth: FirebaseAuth
     protected lateinit var projectId: String
     protected lateinit var databaseId: String
+    val isDbInitialized: Boolean get() = ::db.isInitialized
+
+    private fun isEmulatorRunning(): Boolean {
+        return runCatching {
+            val conn = URL("http://127.0.0.1:8085").openConnection() as HttpURLConnection
+            conn.connectTimeout = 600
+            conn.readTimeout = 600
+            val code = conn.responseCode
+            conn.disconnect()
+            code > 0
+        }.getOrDefault(false)
+    }
 
     @Before
     open fun setUp() {
+        org.junit.Assume.assumeTrue("Firestore emulator is not running on 127.0.0.1:8085", isEmulatorRunning())
         val context = ApplicationProvider.getApplicationContext<Context>()
         databaseId = context.getString(R.string.firestore_database_id)
 
@@ -65,14 +78,18 @@ abstract class FirestoreEmulatorTestBase {
 
     @After
     open fun tearDown() {
-        runCatching { auth.signOut() }
+        if (::auth.isInitialized) {
+            runCatching { auth.signOut() }
+        }
         clearEmulatorData()
-        runCatching {
-            val terminateTask = db.terminate()
-            val deadline = System.currentTimeMillis() + 5_000L
-            while (!terminateTask.isComplete && System.currentTimeMillis() < deadline) {
-                shadowOf(Looper.getMainLooper()).idle()
-                Thread.sleep(10)
+        if (::db.isInitialized) {
+            runCatching {
+                val terminateTask = db.terminate()
+                val deadline = System.currentTimeMillis() + 5_000L
+                while (!terminateTask.isComplete && System.currentTimeMillis() < deadline) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(10)
+                }
             }
         }
         runCatching { FirebaseApp.clearInstancesForTest() }
@@ -124,11 +141,14 @@ abstract class FirestoreEmulatorTestBase {
     }
 
     protected fun signOut() {
-        auth.signOut()
-        shadowOf(Looper.getMainLooper()).idle()
+        if (::auth.isInitialized) {
+            auth.signOut()
+            shadowOf(Looper.getMainLooper()).idle()
+        }
     }
 
     private fun clearEmulatorData() {
+        if (!::projectId.isInitialized || !::databaseId.isInitialized) return
         listOf(
             "http://127.0.0.1:8085/emulator/v1/projects/$projectId/databases/$databaseId/documents",
             "http://127.0.0.1:9099/emulator/v1/projects/$projectId/accounts"

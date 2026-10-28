@@ -292,6 +292,8 @@ fun PocketApp(viewModel: PocketViewModel) {
                 onGoogleSignedIn = { user -> viewModel.onGoogleUserSignedIn(user) },
                 onSyncNow = { viewModel.syncCloudNow() },
                 onSignOutGoogle = { viewModel.signOutGoogle(context) },
+                onContinueWithoutLoggingIn = { viewModel.continueWithoutLoggingIn(context) },
+                onBackToPage1 = { viewModel.returnToStartupPage1(context) },
                 onComplete = { currencyCode, currencySymbol, selectedWallets, loadSampleTransactions, starterLoans, userName, profilePhotoUri ->
                     viewModel.completeOnboarding(
                         currencyCode = currencyCode,
