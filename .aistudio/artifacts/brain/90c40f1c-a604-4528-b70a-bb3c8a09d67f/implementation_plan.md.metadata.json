@@ -1,6 +1,6 @@
 {
-  "summary":  "Two-page startup onboarding flow (Welcome & Auth Page 1, Wallet & Profile Setup Page 2) with Google Cloud account restoration, offline local-wipe confirmation in Settings, and clean device cache reset on sign-out.",
-  "updatedAt":  "2026-10-27T18:51:46.911919151Z",
+  "summary":  "Implementation plan for a clean rebuild of Pocket, synchronizing both the Android app and the Web app with identical modern UI, features, and dual-path GitHub Pages support (/ and /ios-pocket/).",
+  "updatedAt":  "2026-10-28T09:51:35.007006951Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

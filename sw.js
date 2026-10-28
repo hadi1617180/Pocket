@@ -5,18 +5,18 @@ const ASSETS = [
   './styles.css',
   './app.js',
   './manifest.json',
-  './ios-pocket/assets/ic_pocket_logo.png',
-  './ios-pocket/assets/developer_hadi_photo.jpg',
-  './ios-pocket/assets/wallet_icon_bank.png',
-  './ios-pocket/assets/wallet_icon_bkash.png',
-  './ios-pocket/assets/wallet_icon_brac.png',
-  './ios-pocket/assets/wallet_icon_card.png',
-  './ios-pocket/assets/wallet_icon_cash.png',
-  './ios-pocket/assets/wallet_icon_mtb.png',
-  './ios-pocket/assets/wallet_icon_nagad.png',
-  './ios-pocket/assets/wallet_icon_rapid_pass.png',
-  './ios-pocket/assets/wallet_icon_rocket.png',
-  './ios-pocket/assets/wallet_icon_savings.png'
+  './assets/ic_pocket_logo.png',
+  './assets/developer_hadi_photo.jpg',
+  './assets/wallet_icon_bank.png',
+  './assets/wallet_icon_bkash.png',
+  './assets/wallet_icon_brac.png',
+  './assets/wallet_icon_card.png',
+  './assets/wallet_icon_cash.png',
+  './assets/wallet_icon_mtb.png',
+  './assets/wallet_icon_nagad.png',
+  './assets/wallet_icon_rapid_pass.png',
+  './assets/wallet_icon_rocket.png',
+  './assets/wallet_icon_savings.png'
 ];
 
 self.addEventListener('install', (event) => {
