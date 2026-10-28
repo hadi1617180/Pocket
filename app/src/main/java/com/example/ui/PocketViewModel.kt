@@ -66,6 +66,7 @@ enum class OnboardingStage {
 
 data class PocketUiState(
     val isLoading: Boolean = true,
+    val hasCompletedOnboarding: Boolean = false,
     val settings: AppSettingsEntity = AppSettingsEntity(),
     val onboardingStage: OnboardingStage = OnboardingStage.PAGE_1_WELCOME,
     val isAppUnlocked: Boolean = true,
@@ -157,6 +158,7 @@ class PocketViewModel(
 
     private val _navStack = MutableStateFlow<List<PocketScreen>>(listOf(PocketScreen.Wallets))
     private val _onboardingStage = MutableStateFlow(OnboardingStage.PAGE_1_WELCOME)
+    private val _hasCompletedOnboardingOverride = MutableStateFlow<Boolean?>(null)
     private val _selectedYear = MutableStateFlow(Calendar.getInstance().get(Calendar.YEAR))
     private val _selectedMonth = MutableStateFlow(Calendar.getInstance().get(Calendar.MONTH))
     private val _selectedReportCurrency = MutableStateFlow("BDT")
@@ -188,6 +190,9 @@ class PocketViewModel(
                 PocketNotificationManager.syncCreditCardNotifications(ctx)
             }
             val initialSettings = runCatching { repository.buildBackupPayload().settings }.getOrNull()
+            if (initialSettings != null) {
+                _hasCompletedOnboardingOverride.value = initialSettings.hasCompletedOnboarding
+            }
             val existingUser = runCatching { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser }.getOrNull()
             if (existingUser != null) {
                 if (initialSettings?.hasCompletedOnboarding == true) {
@@ -224,6 +229,7 @@ class PocketViewModel(
                     }
                 }
             }
+            _hasCompletedOnboardingOverride.value = false
             _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
         }
     }
@@ -252,6 +258,7 @@ class PocketViewModel(
                     }
                 }
             }
+            _hasCompletedOnboardingOverride.value = false
             _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
         }
     }
@@ -385,6 +392,7 @@ class PocketViewModel(
                                 profilePhotoUri = currentSettings.profilePhotoUri.ifBlank { googlePhoto }
                             )
                         )
+                        _hasCompletedOnboardingOverride.value = false
                         _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
                         _cloudAuthState.update {
                             it.copy(
@@ -538,6 +546,7 @@ class PocketViewModel(
             } finally {
                 isApplyingRemoteSnapshot = false
             }
+            _hasCompletedOnboardingOverride.value = true
             _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
             withContext(Dispatchers.Main) {
                 _navStack.value = listOf(PocketScreen.Wallets)
@@ -572,6 +581,7 @@ class PocketViewModel(
                     syncVersion = version
                 )
             }
+            _hasCompletedOnboardingOverride.value = true
             _cloudAuthState.update {
                 it.copy(
                     isSyncing = false,
@@ -596,6 +606,7 @@ class PocketViewModel(
         } finally {
             isApplyingRemoteSnapshot = false
         }
+        _hasCompletedOnboardingOverride.value = false
         _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
         _cloudAuthState.update {
             it.copy(
@@ -656,6 +667,7 @@ class PocketViewModel(
                         )
                     }
                 }
+                _hasCompletedOnboardingOverride.value = true
                 _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
                 startObservingRemoteProfile(uid)
                 _cloudAuthState.update {
@@ -686,6 +698,7 @@ class PocketViewModel(
                     isApplyingRemoteSnapshot = false
                 }
                 lastKnownSyncVersion = conflictSnapshot.profile.syncVersion
+                _hasCompletedOnboardingOverride.value = true
                 _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
                 startObservingRemoteProfile(uid)
 
@@ -717,6 +730,7 @@ class PocketViewModel(
                     isApplyingRemoteSnapshot = false
                 }
                 lastKnownSyncVersion = 0L
+                _hasCompletedOnboardingOverride.value = false
                 _onboardingStage.value = OnboardingStage.PAGE_2_SETUP
                 startObservingRemoteProfile(uid)
 
@@ -749,6 +763,7 @@ class PocketViewModel(
                 com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
             }
             _cloudAuthState.value = CloudAuthUiState()
+            _hasCompletedOnboardingOverride.value = true
             _statusMessage.value = "Sign-in cancelled. Staying offline with current local data."
         }
     }
@@ -880,10 +895,54 @@ class PocketViewModel(
             }
             lastKnownSyncVersion = 0L
             _cloudAuthState.value = CloudAuthUiState()
+            _hasCompletedOnboardingOverride.value = false
             _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
             _navStack.value = listOf(PocketScreen.Wallets)
             PocketWidgetUpdater.refreshAllWidgets(appCtx)
             _statusMessage.value = "Signed out of Google Account. Cached device data cleared."
+        }
+    }
+
+    fun deleteGoogleAccountPermanently(context: Context) {
+        val appCtx = context.applicationContext
+        val activeAuthState = _cloudAuthState.value
+        remoteProfileObserverJob?.cancel()
+        debouncedCloudPushJob?.cancel()
+        _cloudAuthState.update { it.copy(isSyncing = true, lastSyncStatus = "Deleting account and cloud data...") }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val uid = activeAuthState.uid
+                val cloudRepo = cloudSyncRepository
+                if (uid != null && cloudRepo != null) {
+                    runCatching {
+                        cloudRepo.deleteEntireCloudAccount(uid)
+                    }
+                }
+            }
+            com.example.ui.components.signOutGoogleAccount(context)
+            withContext(Dispatchers.IO) {
+                isApplyingRemoteSnapshot = true
+                try {
+                    val currentSettings = repository.buildBackupPayload().settings
+                    repository.wipeAllLocalData(
+                        resetOnboardingToFalse = true,
+                        userName = "",
+                        profilePhotoUri = "",
+                        themeMode = currentSettings.themeMode,
+                        accentColorHex = currentSettings.accentColorHex
+                    )
+                    PocketNotificationManager.cancelAllNotifications(appCtx)
+                } finally {
+                    isApplyingRemoteSnapshot = false
+                }
+            }
+            lastKnownSyncVersion = 0L
+            _cloudAuthState.value = CloudAuthUiState()
+            _hasCompletedOnboardingOverride.value = false
+            _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
+            _navStack.value = listOf(PocketScreen.Wallets)
+            PocketWidgetUpdater.refreshAllWidgets(appCtx)
+            _statusMessage.value = "Account and cloud data permanently deleted. Next sign-in will create a new account."
         }
     }
 
@@ -924,9 +983,11 @@ class PocketViewModel(
             _statusMessage,
             _cloudAuthState,
             _pendingRecurringPayId,
-            combine(_selectedReportCurrency, _onboardingStage) { rc, stage -> rc to stage }
-        ) { u, m, c, p, rcAndStage ->
-            listOf(u, m, c, p, rcAndStage.first, rcAndStage.second)
+            combine(_selectedReportCurrency, _onboardingStage, _hasCompletedOnboardingOverride) { rc, stage, obOverride ->
+                Triple(rc, stage, obOverride)
+            }
+        ) { u, m, c, p, triple ->
+            listOf(u, m, c, p, triple.first, triple.second, triple.third)
         }
     ) { db, navStack, year, month, extraList ->
         val unlocked = extraList[0] as Boolean
@@ -935,8 +996,14 @@ class PocketViewModel(
         val pendingRecurringId = extraList[3] as Long?
         val requestedReportCurrency = (extraList[4] as String).ifBlank { "BDT" }
         val onboardingStage = extraList[5] as OnboardingStage
+        val onboardingOverride = extraList[6] as Boolean?
         val rawSettings = db.settings ?: AppSettingsEntity()
-        val settings = rawSettings.copy(currencyCode = "BDT", currencySymbol = "৳")
+        val effectiveHasCompletedOnboarding = onboardingOverride ?: rawSettings.hasCompletedOnboarding
+        val settings = rawSettings.copy(
+            currencyCode = "BDT",
+            currencySymbol = "৳",
+            hasCompletedOnboarding = effectiveHasCompletedOnboarding
+        )
         val effectiveUnlocked = !settings.appLockEnabled || settings.appLockPin.isBlank() || unlocked
 
         val sortedWallets = db.wallets.sortedWith(
@@ -1024,6 +1091,7 @@ class PocketViewModel(
 
         PocketUiState(
             isLoading = false,
+            hasCompletedOnboarding = effectiveHasCompletedOnboarding,
             settings = settings,
             onboardingStage = onboardingStage,
             isAppUnlocked = effectiveUnlocked,
@@ -1194,6 +1262,7 @@ class PocketViewModel(
                     profilePhotoUri = profilePhotoUri
                 )
             }
+            _hasCompletedOnboardingOverride.value = true
             _onboardingStage.value = OnboardingStage.PAGE_1_WELCOME
             _navStack.value = listOf(PocketScreen.Wallets)
             _cloudAuthState.value.uid?.let { uid ->

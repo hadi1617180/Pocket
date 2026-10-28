@@ -40,6 +40,25 @@ try {
   console.warn("Firebase initialization fallback:", err);
 }
 
+// Strong tactile haptic feedback for web / mobile browsers
+export function triggerHaptic(type = "click") {
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    try {
+      if (type === "heavy" || type === "delete") {
+        navigator.vibrate([70, 45, 70]);
+      } else if (type === "warning") {
+        navigator.vibrate([50, 30, 50]);
+      } else if (type === "long") {
+        navigator.vibrate(60);
+      } else {
+        // High, punchy tactile vibration
+        navigator.vibrate(40);
+      }
+    } catch (e) {}
+  }
+}
+window.triggerHaptic = triggerHaptic;
+
 // Resolve asset paths whether served from root (/) or (/ios-pocket/)
 const IN_SUBFOLDER = window.location.pathname.includes("/ios-pocket");
 export function assetUrl(fileName) {
@@ -1208,8 +1227,77 @@ export async function signOutGoogleAccountFromApp() {
   state.ui.currentScreen = "WALLETS";
   state.ui.activeBottomTab = "BALANCES";
   saveStateToStorage();
+  triggerHaptic("click");
   showToast("Signed out of Google Account. Cached device data cleared.");
   render();
+}
+
+export async function deleteGoogleAccountPermanently() {
+  const uid = state.cloudAuth.uid;
+  if (!uid || !db) return;
+  state.cloudAuth.isSyncing = true;
+  state.cloudAuth.lastSyncStatus = "Deleting account and cloud data...";
+  render();
+
+  try {
+    const subcollections = [
+      "wallets",
+      "categories",
+      "transactions",
+      "transfers",
+      "loans",
+      "loan_activities",
+      "balance_adjustments",
+      "recurring_transactions",
+      "savings_goals"
+    ];
+
+    for (const sub of subcollections) {
+      try {
+        const snap = await getDocs(collection(db, "users", uid, sub));
+        for (const d of snap.docs) {
+          await deleteDoc(doc(db, "users", uid, sub, d.id));
+        }
+      } catch (e) {
+        console.warn(`Subcollection delete error (${sub}):`, e);
+      }
+    }
+
+    try {
+      await deleteDoc(doc(db, "users", uid));
+    } catch (e) {
+      console.warn("User doc delete error:", e);
+    }
+
+    if (profileUnsubscribe) {
+      profileUnsubscribe();
+      profileUnsubscribe = null;
+    }
+    if (pushDebounceTimer) {
+      clearTimeout(pushDebounceTimer);
+      pushDebounceTimer = null;
+    }
+
+    if (auth) {
+      await signOut(auth).catch(() => {});
+    }
+
+    wipeAllLocalData(true, "", "");
+    state.cloudAuth = createInitialState().cloudAuth;
+    state.onboardingStage = "PAGE_1_WELCOME";
+    state.ui.currentScreen = "WALLETS";
+    state.ui.activeBottomTab = "BALANCES";
+    saveStateToStorage();
+    triggerHaptic("heavy");
+    showToast("Account & cloud data permanently deleted. Next sign-in will create a new account.");
+    render();
+  } catch (err) {
+    console.error("Account deletion failed:", err);
+    state.cloudAuth.isSyncing = false;
+    state.cloudAuth.lastSyncStatus = `Delete failed: ${err.message || "error"}`;
+    showToast(`Account deletion failed: ${err.message || "Check connection"}`);
+    render();
+  }
 }
 
 function wipeAllLocalData(resetOnboardingToFalse = true, userName = "", profilePhotoUri = "") {
@@ -1279,6 +1367,7 @@ export function evaluateMathInput(expr) {
 }
 
 window.insertMathOperator = function (inputId, op) {
+  triggerHaptic("click");
   const el = document.getElementById(inputId);
   if (!el) return;
   if (op === "=") {
@@ -2122,7 +2211,15 @@ function renderSettingsScreen() {
                <button class="btn btn-primary btn-sm" onclick="window.pocketActions.syncNow()" ${state.cloudAuth.isSyncing ? "disabled" : ""}>
                  ${state.cloudAuth.isSyncing ? "Syncing..." : "Sync Now"}
                </button>
-               <button class="btn btn-danger btn-sm" onclick="window.pocketActions.confirmSignOutModal()">Sign Out</button>
+               <button class="btn btn-outline btn-sm" onclick="window.pocketActions.confirmSignOutModal()">Sign Out</button>
+             </div>
+             <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+               <div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
+                 <span>🗑️</span><span>Permanently remove cloud account</span>
+               </div>
+               <button class="btn btn-danger btn-sm" onclick="window.pocketActions.confirmDeleteAccountModal()" style="font-size:12px;height:32px;padding:0 10px;">
+                 Delete Account
+               </button>
              </div>`
           : `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">
                Currently using Pocket offline. Sign in with Google to switch to your cloud backup.
@@ -2454,6 +2551,30 @@ function renderActiveModal() {
           <div class="grid-2" style="margin-top:16px;">
             <button class="btn btn-outline" onclick="window.pocketActions.closeModal()">Cancel</button>
             <button class="btn btn-danger" onclick="window.pocketActions.confirmSignOutNow()">Sign Out</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (m.type === "CONFIRM_DELETE_ACCOUNT") {
+    const acc = state.cloudAuth.email || state.cloudAuth.displayName || "your Google Account";
+    return `
+      <div class="modal-scrim" onclick="window.pocketActions.closeModal()">
+        <div class="modal-card" onclick="event.stopPropagation()">
+          <div style="font-size:20px;font-weight:800;color:var(--expense);margin-bottom:8px;">Delete Account Permanently?</div>
+          <p style="font-size:13px;color:var(--text);line-height:1.45;margin-bottom:10px;">
+            Are you sure you want to delete your Pocket account (<strong>${escapeHtml(acc)}</strong>)?
+          </p>
+          <div class="elevated-box" style="border-color:var(--expense);margin-bottom:12px;font-size:12px;color:var(--expense);line-height:1.4;">
+            <strong>WARNING:</strong> All your cloud data, wallets, transactions, transfers, loans, and settings will be permanently erased from Google Cloud. Local device data will also be wiped.
+          </div>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">
+            Next time you sign in with this Google account, it will start completely fresh as a brand-new account.
+          </p>
+          <div class="grid-2">
+            <button class="btn btn-outline" onclick="window.pocketActions.closeModal()">Cancel</button>
+            <button class="btn btn-danger" onclick="window.pocketActions.confirmDeleteAccountNow()">Delete Everything</button>
           </div>
         </div>
       </div>
@@ -3157,6 +3278,7 @@ window.pocketActions = {
   },
 
   switchBottomTab: (tab) => {
+    triggerHaptic("click");
     state.ui.activeBottomTab = tab;
     state.ui.isFabExpanded = false;
     if (tab === "BALANCES") state.ui.currentScreen = "WALLETS";
@@ -3167,6 +3289,7 @@ window.pocketActions = {
   },
 
   openScreen: (screen, walletId = null) => {
+    triggerHaptic("click");
     state.ui.isFabExpanded = false;
     if (walletId !== null) state.ui.selectedWalletId = Number(walletId);
     state.ui.currentScreen = screen;
@@ -3174,12 +3297,14 @@ window.pocketActions = {
   },
 
   openWalletDetail: (walletId) => {
+    triggerHaptic("click");
     state.ui.selectedWalletId = Number(walletId);
     state.ui.currentScreen = "WALLET_DETAIL";
     render();
   },
 
   shiftMonth: (delta) => {
+    triggerHaptic("click");
     let m = state.ui.selectedMonth + delta;
     let y = state.ui.selectedYear;
     if (m < 0) { m = 11; y -= 1; }
@@ -3190,12 +3315,14 @@ window.pocketActions = {
   },
 
   togglePrivacy: () => {
+    triggerHaptic("click");
     state.settings.hideBalancesPrivacy = !state.settings.hideBalancesPrivacy;
     scheduleCloudPush();
     render();
   },
 
   toggleFab: () => {
+    triggerHaptic("click");
     state.ui.isFabExpanded = !state.ui.isFabExpanded;
     render();
   },
@@ -3984,6 +4111,17 @@ window.pocketActions = {
   confirmSignOutNow: () => {
     state.ui.modal = null;
     signOutGoogleAccountFromApp();
+  },
+
+  confirmDeleteAccountModal: () => {
+    triggerHaptic("warning");
+    state.ui.modal = { type: "CONFIRM_DELETE_ACCOUNT" };
+    render();
+  },
+
+  confirmDeleteAccountNow: () => {
+    state.ui.modal = null;
+    deleteGoogleAccountPermanently();
   },
 
   resolveConflict: (choice) => resolveCloudConflict(choice),

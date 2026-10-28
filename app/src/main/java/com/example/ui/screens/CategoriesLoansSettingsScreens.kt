@@ -1724,6 +1724,7 @@ fun SettingsScreen(
                     onGoogleSignedIn = { user -> viewModel.onGoogleUserSignedIn(user) },
                     onSyncNowClicked = { viewModel.syncCloudNow() },
                     onSignOutClicked = { viewModel.signOutGoogle(context) },
+                    onDeleteAccountClicked = { viewModel.deleteGoogleAccountPermanently(context) },
                     modifier = Modifier.testTag("settings_google_sync_card")
                 )
             }

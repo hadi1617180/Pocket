@@ -23,6 +23,10 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.compose.foundation.BorderStroke
@@ -2214,17 +2218,37 @@ fun rememberUniversalImagePickerLauncher(
 }
 
 /**
- * Triggers subtle tactile haptic feedback for switches, long-presses, PIN pad buttons, and payment actions.
+ * Triggers strong, tactile haptic feedback for buttons, switches, PIN pad entries, speed-dial actions, and transactions.
  */
 fun performPocketHaptic(view: View?, isLongPress: Boolean = false) {
     if (view == null) return
     runCatching {
-        val constant = if (isLongPress) {
-            HapticFeedbackConstants.LONG_PRESS
+        val context = view.context
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = ContextCompat.getSystemService(context, VibratorManager::class.java)
+            vibratorManager?.defaultVibrator
         } else {
-            HapticFeedbackConstants.CLOCK_TICK
+            @Suppress("DEPRECATION")
+            ContextCompat.getSystemService(context, Vibrator::class.java)
         }
-        view.performHapticFeedback(constant)
+
+        if (vibrator != null && vibrator.hasVibrator()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val duration = if (isLongPress) 85L else 45L
+                val amplitude = if (isLongPress) 255 else 225
+                vibrator.vibrate(VibrationEffect.createOneShot(duration, amplitude))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(if (isLongPress) 85L else 45L)
+            }
+        } else {
+            val constant = if (isLongPress) {
+                HapticFeedbackConstants.LONG_PRESS
+            } else {
+                HapticFeedbackConstants.CONFIRM
+            }
+            view.performHapticFeedback(constant, HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING)
+        }
     }
 }
 

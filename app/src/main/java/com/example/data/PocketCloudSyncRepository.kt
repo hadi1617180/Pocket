@@ -534,6 +534,38 @@ class PocketCloudSyncRepository(
         }
     }
 
+    suspend fun deleteEntireCloudAccount(userId: String) {
+        val userDocPath = "users/$userId"
+        val subcollections = listOf(
+            "wallets",
+            "categories",
+            "transactions",
+            "transfers",
+            "loans",
+            "loan_activities",
+            "balance_adjustments",
+            "recurring_transactions",
+            "savings_goals"
+        )
+        for (col in subcollections) {
+            val subPath = "$userDocPath/$col"
+            try {
+                val colRef = db.collection("users").document(userId).collection(col)
+                val snapshot = colRef.get().await()
+                for (doc in snapshot.documents) {
+                    runCatching { doc.reference.delete().await() }
+                }
+            } catch (e: Exception) {
+                Log.w("PocketCloudSync", "Failed to clean subcollection $subPath: ${e.message}")
+            }
+        }
+        try {
+            db.collection("users").document(userId).delete().await()
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, userDocPath)
+        }
+    }
+
     private suspend fun <T> syncSubcollection(
         userId: String,
         collectionName: String,

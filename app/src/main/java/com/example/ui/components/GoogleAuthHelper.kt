@@ -26,6 +26,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -279,6 +280,7 @@ fun GoogleAccountSyncCard(
     onGoogleSignedIn: (FirebaseUser) -> Unit,
     onSyncNowClicked: () -> Unit,
     onSignOutClicked: () -> Unit,
+    onDeleteAccountClicked: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -292,6 +294,7 @@ fun GoogleAccountSyncCard(
     var localErrorMessage by remember { mutableStateOf<String?>(null) }
     var showOfflineWipeConfirmDialog by remember { mutableStateOf(false) }
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
+    var showDeleteAccountConfirmDialog by remember { mutableStateOf(false) }
 
     val isSignedIn = !signedInEmail.isNullOrBlank() || !signedInName.isNullOrBlank()
 
@@ -450,6 +453,82 @@ fun GoogleAccountSyncCard(
         )
     }
 
+    if (showDeleteAccountConfirmDialog) {
+        val accountLabel = signedInEmail?.takeIf { it.isNotBlank() }
+            ?: signedInName?.takeIf { it.isNotBlank() }
+            ?: "your Google Account"
+        AlertDialog(
+            onDismissRequest = { showDeleteAccountConfirmDialog = false },
+            containerColor = pocketColors.overlaySurface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.DeleteForever,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Delete Account Permanently?",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Are you sure you want to delete your Pocket account ($accountLabel)?",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "WARNING: All your cloud data, wallets, transactions, transfers, loans, and settings will be permanently erased from Google Cloud. Local device data will also be wiped.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "Next time you sign in with this Google account, it will start completely fresh as a brand-new account.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteAccountConfirmDialog = false
+                        onDeleteAccountClicked?.invoke()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("confirm_delete_account_permanently_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Delete Everything", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteAccountConfirmDialog = false },
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("cancel_delete_account_button")
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     if (!isSignedIn) {
         Column(
             modifier = modifier.fillMaxWidth(),
@@ -503,85 +582,135 @@ fun GoogleAccountSyncCard(
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (!signedInPhotoUrl.isNullOrBlank()) {
-                    UserProfileBadge(
-                        userName = signedInName ?: "",
-                        profilePhotoUri = signedInPhotoUrl,
-                        avatarSize = 32.dp,
-                        showNameBelow = false
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.CloudDone,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = signedInEmail?.ifBlank { signedInName } ?: (signedInName ?: "Google Connected"),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (!lastSyncStatus.isNullOrBlank()) {
-                        Text(
-                            text = lastSyncStatus,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                Button(
-                    onClick = onSyncNowClicked,
-                    enabled = !isSyncing,
-                    modifier = Modifier
-                        .heightIn(min = 40.dp)
-                        .testTag("google_sync_now_button"),
-                    shape = RoundedCornerShape(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (isSyncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
+                    if (!signedInPhotoUrl.isNullOrBlank()) {
+                        UserProfileBadge(
+                            userName = signedInName ?: "",
+                            profilePhotoUri = signedInPhotoUrl,
+                            avatarSize = 32.dp,
+                            showNameBelow = false
                         )
                     } else {
                         Icon(
-                            imageVector = Icons.Default.CloudSync,
-                            contentDescription = "Sync",
-                            modifier = Modifier.size(16.dp)
+                            imageVector = Icons.Default.CloudDone,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Sync", style = MaterialTheme.typography.labelMedium)
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = signedInEmail?.ifBlank { signedInName } ?: (signedInName ?: "Google Connected"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (!lastSyncStatus.isNullOrBlank()) {
+                            Text(
+                                text = lastSyncStatus,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = onSyncNowClicked,
+                        enabled = !isSyncing,
+                        modifier = Modifier
+                            .heightIn(min = 40.dp)
+                            .testTag("google_sync_now_button"),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        if (isSyncing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.CloudSync,
+                                contentDescription = "Sync",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Sync", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            showSignOutConfirmDialog = true
+                        },
+                        enabled = !isSyncing,
+                        modifier = Modifier
+                            .heightIn(min = 40.dp)
+                            .testTag("google_sign_out_button"),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Sign Out", style = MaterialTheme.typography.labelMedium)
                     }
                 }
 
-                OutlinedButton(
-                    onClick = {
-                        showSignOutConfirmDialog = true
-                    },
-                    enabled = !isSyncing,
-                    modifier = Modifier
-                        .heightIn(min = 40.dp)
-                        .testTag("google_sign_out_button"),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Sign Out", style = MaterialTheme.typography.labelMedium)
+                if (onDeleteAccountClicked != null) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        thickness = 0.8.dp
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteForever,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Delete account & data",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = { showDeleteAccountConfirmDialog = true },
+                            enabled = !isSyncing,
+                            modifier = Modifier
+                                .heightIn(min = 36.dp)
+                                .testTag("delete_google_account_button"),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Text(
+                                text = "Delete Account",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }

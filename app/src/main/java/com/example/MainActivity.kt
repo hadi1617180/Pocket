@@ -265,8 +265,8 @@ fun PocketApp(viewModel: PocketViewModel) {
         }
     }
 
-    LaunchedEffect(uiState.settings.hasCompletedOnboarding) {
-        if (uiState.settings.hasCompletedOnboarding && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    LaunchedEffect(uiState.hasCompletedOnboarding) {
+        if (uiState.hasCompletedOnboarding && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (!com.example.notification.PocketNotificationManager.hasNotificationPermission(context)) {
                 runCatching {
                     notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -286,7 +286,7 @@ fun PocketApp(viewModel: PocketViewModel) {
             return@PocketTheme
         }
 
-        if (!uiState.settings.hasCompletedOnboarding) {
+        if (!uiState.hasCompletedOnboarding) {
             OnboardingScreen(
                 uiState = uiState,
                 onGoogleSignedIn = { user -> viewModel.onGoogleUserSignedIn(user) },
