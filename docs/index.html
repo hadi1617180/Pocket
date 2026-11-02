@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Pocket" />
+  <meta name="description" content="Pocket — Personal Finance, Multi-Wallet & Khata Ledger for Bangladesh (bKash, Nagad, Rocket, Banks, Cards & Loans)" />
+  <title>Pocket — Personal Finance & Multi-Wallet Ledger</title>
+
+  <!-- Official App Icon & PWA Manifest -->
+  <link rel="icon" type="image/png" href="./assets/ic_pocket_logo.png" />
+  <link rel="apple-touch-icon" href="./assets/ic_pocket_logo.png" />
+  <link rel="manifest" href="./manifest.json" />
+
+  <!-- Fonts: Inter, Noto Sans Bengali & Material Symbols Rounded -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+Bengali:wght@400;500;600;700;800&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Core Stylesheet -->
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- Hidden SVG Filter for 1:1 Dynamic Accent Tinting of Official PNG Wallet Icons -->
+  <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden;" aria-hidden="true">
+    <defs>
+      <filter id="pocket-wallet-tint" color-interpolation-filters="sRGB">
+        <feColorMatrix
+          id="pocket-wallet-tint-matrix"
+          type="matrix"
+          values="0 0 0 0 0.945  0 0 0 0 0.353  0 0 0 0 0.141  0 0 0 1 0"
+        />
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- Carbon Fiber Weave Background & Custom Wallpaper Layer -->
+  <div id="carbon-fiber-bg" aria-hidden="true"></div>
+  <div id="custom-wallpaper-layer" aria-hidden="true"></div>
+
+  <!-- Main Mobile/Responsive App Shell -->
+  <main id="app-shell" role="main">
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:14px;">
+      <img
+        src="./assets/ic_pocket_logo.png"
+        alt="Pocket Logo"
+        style="width:72px;height:72px;border-radius:18px;box-shadow:0 8px 28px rgba(241,90,36,0.35);"
+      />
+      <div style="font-weight:800;font-size:20px;letter-spacing:-0.02em;">Pocket</div>
+      <div style="font-size:12px;color:#A1A1AA;">Loading your ledger...</div>
+    </div>
+  </main>
+
+  <!-- Floating Action Button Container -->
+  <div id="fab-container"></div>
+
+  <!-- 4-Tab Liquid Pill Bottom Navigation Bar -->
+  <nav id="bottom-nav-container" class="liquid-bottom-nav-wrap" aria-label="Primary Navigation"></nav>
+
+  <!-- Modal / Dialog Backdrop -->
+  <div id="modal-backdrop" onclick="if(event.target === this && window.PocketApp) window.PocketApp.closeModal()"></div>
+
+  <!-- Snackbar Notification -->
+  <div id="pocket-snackbar" role="status" aria-live="polite"></div>
+
+  <!-- Hidden File Input for Restore JSON, CSV Import & Custom Wallpaper/Photo Attachment -->
+  <input id="hidden-file-input" type="file" style="display:none;" />
+
+  <!-- Main Application Entry Point -->
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

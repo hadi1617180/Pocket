@@ -1,0 +1,239 @@
+// PocketLocalizer — 1:1 Web port of com.example.data.PocketLocalizer
+export const PocketLocalizer = {
+  currentLanguage: 'EN',
+
+  enToBn: new Map(),
+
+  init() {
+    const pairs = [
+      ["Balances", "ব্যালেন্স"],
+      ["History", "লেনদেন"],
+      ["Report", "রিপোর্ট"],
+      ["Reports", "রিপোর্ট"],
+      ["Loans", "ঋণ ও পাওনা"],
+      ["Settings", "সেটিংস"],
+      ["Categories", "ক্যাটাগরি"],
+      ["Categories & Budgets", "ক্যাটাগরি ও বাজেট"],
+      ["Recurring Bills", "নিয়মিত বিল"],
+      ["Recurring Bills & Income", "নিয়মিত বিল ও আয়"],
+      ["Recurring Bills & Subscriptions", "নিয়মিত বিল ও সাবস্ক্রিপশন"],
+      ["Monthly Statement", "মাসিক স্টেটমেন্ট"],
+      ["Adjust Balance", "ব্যালেন্স সমন্বয়"],
+      ["Backup & Restore", "ব্যাকআপ ও রিস্টোর"],
+      ["Backup, Restore & CSV", "ব্যাকআপ, রিস্টোর ও সিএসভি"],
+      ["JSON Backup & Restore", "জেসন ব্যাকআপ ও রিস্টোর"],
+      ["Save", "সংরক্ষণ করুন"],
+      ["Cancel", "বাতিল"],
+      ["Delete", "মুছে ফেলুন"],
+      ["Edit", "সম্পাদনা"],
+      ["Close", "বন্ধ করুন"],
+      ["Done", "সম্পন্ন"],
+      ["Confirm", "নিশ্চিত করুন"],
+      ["Apply", "প্রয়োগ করুন"],
+      ["Back", "পেছনে"],
+      ["Add", "যোগ করুন"],
+      ["New", "নতুন"],
+      ["Update", "আপডেট করুন"],
+      ["Clear", "মুছুন"],
+      ["Search", "অনুসন্ধান"],
+      ["All", "সব"],
+      ["Active", "চলমান"],
+      ["Overdue", "মেয়াদোত্তীর্ণ"],
+      ["Settled", "পরিশোধিত"],
+      ["Yes", "হ্যাঁ"],
+      ["No", "না"],
+      ["Optional", "ঐচ্ছিক"],
+      ["Required", "আবশ্যক"],
+      ["Default", "ডিফল্ট"],
+      ["Select Date", "তারিখ নির্বাচন করুন"],
+      ["Pick Date", "তারিখ নিন"],
+      ["Today", "আজ"],
+      ["Yesterday", "গতকাল"],
+      ["Tomorrow", "আগামীকাল"],
+      ["Share", "শেয়ার করুন"],
+      ["Export", "এক্সপোর্ট"],
+      ["Import", "ইমপোর্ট"],
+      ["Restore", "রিস্টোর"],
+      ["Copy", "কপি করুন"],
+      ["Paste SMS", "এসএমএস পেস্ট"],
+      ["Auto-Fill", "অটো-ফিল"],
+      ["Attach", "সংযুক্ত করুন"],
+      ["Change", "পরিবর্তন করুন"],
+      ["Remove", "সরান"],
+      ["Cash", "ক্যাশ"],
+      ["Bank", "ব্যাংক"],
+      ["Card", "কার্ড"],
+      ["Savings", "সেভিংস"],
+      ["Bkash", "বিকাশ"],
+      ["bKash", "বিকাশ"],
+      ["Nagad", "নগদ"],
+      ["Rocket", "রকেট"],
+      ["Upay", "উপায়"],
+      ["Rapid Pass", "র‍্যাপিড পাস"],
+      ["MTB", "এমটিবি ব্যাংক"],
+      ["Brac", "ব্র্যাক ব্যাংক"],
+      ["Food & Dining", "খাবার ও রেস্তোরাঁ"],
+      ["Groceries & Bazar", "বাজার ও মুদি"],
+      ["Transport & Fuel", "যাতায়াত ও জ্বালানি"],
+      ["Rent & Housing", "বাসা ভাড়া ও আবাসন"],
+      ["Utilities & Bills", "ইউটিলিটি ও বিল"],
+      ["Mobile & Internet", "মোবাইল ও ইন্টারনেট"],
+      ["Shopping & Clothes", "কেনাকাটা ও পোশাক"],
+      ["Healthcare & Medicine", "চিকিৎসা ও ওষুধ"],
+      ["Education & Books", "শিক্ষা ও বই"],
+      ["Family & Personal", "পরিবার ও ব্যক্তিগত"],
+      ["Entertainment", "বিনোদন"],
+      ["Travel & Trips", "ভ্রমণ"],
+      ["Charity & Zakat", "দান ও যাকাত"],
+      ["Fees & Charges", "ফি ও চার্জ"],
+      ["Other Expense", "অন্যান্য ব্যয়"],
+      ["Salary & Wages", "বেতন ও মজুরি"],
+      ["Freelance & Business", "ফ্রিল্যান্স ও ব্যবসা"],
+      ["Investment & Profit", "বিনিয়োগ ও মুনাফা"],
+      ["Gifts & Bonus", "উপহার ও বোনাস"],
+      ["Other Income", "অন্যান্য আয়"],
+      ["Profile & Identity", "প্রোফাইল ও পরিচয়"],
+      ["Your Name", "আপনার নাম"],
+      ["Tap avatar to upload photo", "ছবি আপলোড করতে প্রোফাইলে ট্যাপ করুন"],
+      ["Use Google Photo", "গুগলের ছবি ব্যবহার করুন"],
+      ["Language / ভাষা", "ভাষা / Language"],
+      ["Language", "ভাষা"],
+      ["Theme & Appearance", "থিম ও অ্যাপিয়ারেন্স"],
+      ["Theme Mode", "থিম মোড"],
+      ["App theme", "অ্যাপ থিম"],
+      ["Dark", "ডার্ক"],
+      ["Light", "লাইট"],
+      ["Accent color", "অ্যাকসেন্ট রঙ"],
+      ["Accent Color", "অ্যাকসেন্ট রঙ"],
+      ["Orange", "কমলা"],
+      ["Teal", "টিল"],
+      ["Blue", "নীল"],
+      ["Violet", "বেগুনি"],
+      ["Rose", "গোলাপী"],
+      ["Custom Color", "কাস্টম রঙ"],
+      ["Background wallpaper & Opacity", "ব্যাকগ্রাউন্ড ওয়ালপেপার ও অপাসিটি"],
+      ["Upload Wallpaper", "ওয়ালপেপার আপলোড করুন"],
+      ["Change Wallpaper", "ওয়ালপেপার পরিবর্তন করুন"],
+      ["Wallpaper Opacity", "ওয়ালপেপার অপাসিটি"],
+      ["Box Color", "বক্সের রঙ"],
+      ["Box Opacity", "বক্সের অপাসিটি"],
+      ["Carbon", "কার্বন"],
+      ["Slate", "স্লেট"],
+      ["Midnight", "মিডনাইট"],
+      ["Emerald", "এমেরাল্ড"],
+      ["Burgundy", "বারগান্ডি"],
+      ["Reset", "রিসেট"],
+      ["Default wallet for new Entries", "নতুন লেনদেনের ডিফল্ট ওয়ালেট"],
+      ["Negative-balance warnings", "নেগেটিভ ব্যালেন্স সতর্কবার্তা"],
+      ["Security", "নিরাপত্তা"],
+      ["App Lock (PIN)", "অ্যাপ লক (পিন)"],
+      ["Biometric unlock", "বায়োমেট্রিক আনলক"],
+      ["Notification Menu", "নোটিফিকেশন মেনু"],
+      ["Loan Deadline Notification", "ঋণের শেষ তারিখের নোটিফিকেশন"],
+      ["Daily Log Entry Reminder", "প্রতিদিনের হিসাব লেখার রিমাইন্ডার"],
+      ["Daily Log Entry Time", "রিমাইন্ডারের সময়"],
+      ["Sync Loan Deadline Reminders", "ঋণের রিমাইন্ডার সিঙ্ক করুন"],
+      ["Reset all Data to zero", "সব ডেটা শূন্য (০) করুন"],
+      ["Feedback & Bugs Report", "মতামত ও বাগ রিপোর্ট"],
+      ["App developed by Abdullahil Hadi", "অ্যাপ নির্মাতা: আব্দুল্লাহিল হাদী"],
+      ["Acknowledgement", "কৃতজ্ঞতা স্বীকার"],
+      ["Special Thanks to my beloved wife", "বিশেষ ধন্যবাদ আমার প্রিয়তমা স্ত্রী"],
+      ["💖 Mahadia Afruj 💖", "💖 মাহাদিয়া আফরুজ 💖"],
+      ["for inspiring core architecture, her love and endless support.", "মূল আর্কিটেকচারের অনুপ্রেরণা, তাঁর ভালোবাসা এবং অফুরন্ত সমর্থনের জন্য।"],
+      ["Free Tier Plan", "ফ্রি প্ল্যান"],
+      ["Lifetime Premium", "লাইফটাইম প্রিমিয়াম"],
+      ["3 Days Premium", "৩ দিনের প্রিমিয়াম"],
+      ["Tap to upgrade to Pocket Premium", "পকেট প্রিমিয়ামে আপগ্রেড করতে ট্যাপ করুন"],
+      ["All features permanently unlocked", "সব ফিচার স্থায়ীভাবে আনলক করা আছে"],
+      ["Sign in with Google", "গুগল দিয়ে সাইন ইন করুন"],
+      ["Continue without logging in", "লগইন ছাড়াই চালিয়ে যান"],
+      ["Sync Now", "এখনই সিঙ্ক করুন"],
+      ["Sign Out", "সাইন আউট"],
+      ["Delete Account", "অ্যাকাউন্ট মুছুন"],
+      ["Total wallet balance", "মোট ওয়ালেট ব্যালেন্স"],
+      ["Total Available Balance", "মোট ব্যবহারযোগ্য ব্যালেন্স"],
+      ["Income", "আয়"],
+      ["Expenses", "ব্যয়"],
+      ["Expense", "ব্যয়"],
+      ["Transfer", "ট্রান্সফার"],
+      ["Monthly Budget", "মাসিক বাজেট"],
+      ["Not in total balance", "মোট ব্যালেন্সে যুক্ত নয়"],
+      ["Include in Total Balance", "মোট ব্যালেন্সে অন্তর্ভুক্ত করুন"],
+      ["Get started", "শুরু করুন"],
+      ["Existing loan", "পূর্বের ঋণ ও পাওনা"],
+      ["I gave", "আমি দিয়েছি"],
+      ["I took", "আমি নিয়েছি"],
+      ["Person name", "ব্যক্তির নাম"],
+      ["Person or Institution Name", "ব্যক্তি বা প্রতিষ্ঠানের নাম"],
+      ["Deadline Date (Optional - Tap to pick)", "পরিশোধের শেষ তারিখ (ঐচ্ছিক - নির্বাচন করতে ট্যাপ করুন)"],
+      ["Remind Tomorrow", "আগামীকাল মনে করিয়ে দিন"],
+      ["Pay", "পরিশোধ"],
+      ["Receive", "গ্রহণ"],
+      ["Manage All", "সব ম্যানেজ করুন"],
+      ["Financial Modules", "আর্থিক মডিউল"],
+      ["Preferences", "পছন্দসমূহ"],
+      ["Backup", "ব্যাকআপ"],
+      ["Lent (Receivable)", "পাওনা (প্রদত্ত)"],
+      ["Borrowed (Payable)", "দেনা (গৃহীত)"],
+      ["Share Khata Statement", "খাতা স্টেটমেন্ট শেয়ার করুন"],
+      ["Create First Loan", "প্রথম ঋণ যুক্ত করুন"],
+      ["No loans recorded", "কোনো ঋণের হিসাব নেই"],
+      ["Save Loan", "ঋণ সংরক্ষণ করুন"],
+      ["Create Loan Record", "নতুন ঋণের হিসাব"],
+      ["Repay / View", "পরিশোধ / দেখুন"],
+      ["Ledger", "লেজার"]
+    ];
+    for (const [en, bn] of pairs) {
+      this.enToBn.set(en, bn);
+      this.enToBn.set(en.toLowerCase(), bn);
+    }
+  },
+
+  setLanguage(lang) {
+    this.currentLanguage = (lang || 'EN').toUpperCase() === 'BN' ? 'BN' : 'EN';
+  },
+
+  normalizeToAsciiDigits(input) {
+    if (!input) return '';
+    return String(input).replace(/[০-৯]/g, (ch) => String(ch.charCodeAt(0) - 0x09E6));
+  },
+
+  toBanglaDigits(input) {
+    if (input === null || input === undefined) return '';
+    const str = String(input);
+    if (this.currentLanguage !== 'BN') return str;
+    return str.replace(/[0-9]/g, (d) => String.fromCharCode(0x09E6 + Number(d)));
+  },
+
+  t(text) {
+    if (text === null || text === undefined) return '';
+    const raw = String(text);
+    if (this.currentLanguage !== 'BN') return raw;
+    const trimmed = raw.trim();
+    if (!trimmed) return raw;
+    const direct = this.enToBn.get(trimmed) || this.enToBn.get(trimmed.toLowerCase());
+    if (direct) return this.toBanglaDigits(direct);
+
+    // Dynamic patterns
+    if (trimmed.startsWith('Show more wallets (')) {
+      const m = trimmed.match(/\d+/);
+      const count = m ? this.toBanglaDigits(m[0]) : '';
+      return `আরও ওয়ালেট দেখুন (${count}টি)`;
+    }
+    if (trimmed.startsWith('Monthly Budget (')) {
+      return this.toBanglaDigits(trimmed.replace('Monthly Budget', 'মাসিক বাজেট'));
+    }
+    if (trimmed.startsWith('Recurring Due (')) {
+      return this.toBanglaDigits(trimmed.replace('Recurring Due', 'বকেয়া নিয়মিত বিল'));
+    }
+    if (trimmed.startsWith('Outstanding:')) {
+      return this.toBanglaDigits(trimmed.replace('Outstanding:', 'বাকি:'));
+    }
+    if (trimmed.startsWith('Repaid so far:')) {
+      return this.toBanglaDigits(trimmed.replace('Repaid so far:', 'পরিশোধিত:'));
+    }
+    return this.toBanglaDigits(raw);
+  }
+};
+
+PocketLocalizer.init();

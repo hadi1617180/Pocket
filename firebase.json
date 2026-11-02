@@ -1,0 +1,43 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-android-pocket-90c40f1c-a604-4528-b70a-bb3c8a09d67f",
+      "rules": "firestore.rules"
+    }
+  ],
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "firestore.rules",
+      "firebase-blueprint.json",
+      "**/.*",
+      "**/node_modules/**",
+      "app/**",
+      "gradle/**",
+      "build/**",
+      "*.gradle.kts",
+      "gradle.properties",
+      "debug.keystore*",
+      "metadata.json",
+      "tests/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "emulators": {
+    "singleProjectMode": true,
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8085
+    },
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    }
+  }
+}

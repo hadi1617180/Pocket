@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for fixing multi-currency symbol inaccuracies in Loans and Recurring bills, enforcing Free-tier recurring and daily transaction limits, completing Balance Privacy Mode masking in Wallet Detail, preserving archived categories on transaction edit, and adding consistent dialog scrims and inline math calculation.",
+  "updatedAt": "2026-11-02T16:09:34.643646854Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

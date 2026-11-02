@@ -1,0 +1,629 @@
+:root {
+  --accent-color: #F15A24;
+  --accent-rgb: 241, 90, 36;
+  --accent-highlight: #FF7A47;
+  --bg-base: #000000;
+  --text-primary: #FAFAFA;
+  --text-secondary: #D4D4D8;
+  --text-muted: #A1A1AA;
+  --box-rgb: 20, 20, 22;
+  --box-opacity: 0.50;
+  --elevated-rgb: 31, 31, 35;
+  --elevated-opacity: 0.56;
+  --surface-box: rgba(var(--box-rgb), var(--box-opacity));
+  --surface-elevated: rgba(var(--elevated-rgb), var(--elevated-opacity));
+  --surface-selected: rgba(var(--accent-rgb), 0.24);
+  --overlay-surface: rgba(20, 20, 23, 0.90);
+  --overlay-card: rgba(31, 31, 36, 0.92);
+  --card-border: rgba(63, 63, 70, 0.55);
+  --divider-subtle: rgba(39, 39, 42, 0.50);
+  --income-text: #4ADE80;
+  --income-container: rgba(13, 40, 24, 0.55);
+  --expense-text: #FF6B6B;
+  --expense-container: rgba(45, 18, 21, 0.55);
+  --transfer-text: #93C5FD;
+  --transfer-container: rgba(23, 37, 84, 0.55);
+  --loan-text: #FF9838;
+  --loan-container: rgba(46, 29, 14, 0.55);
+  --error-color: #FF6B6B;
+}
+
+body.theme-light {
+  --bg-base: #FFFFFF;
+  --text-primary: #18181B;
+  --text-secondary: #52525B;
+  --text-muted: #71717A;
+  --box-rgb: 255, 255, 255;
+  --elevated-rgb: 244, 244, 245;
+  --surface-box: rgba(var(--box-rgb), var(--box-opacity));
+  --surface-elevated: rgba(var(--elevated-rgb), var(--elevated-opacity));
+  --surface-selected: rgba(var(--accent-rgb), 0.16);
+  --overlay-surface: rgba(255, 255, 255, 0.94);
+  --overlay-card: rgba(244, 244, 245, 0.94);
+  --card-border: rgba(228, 228, 231, 0.78);
+  --divider-subtle: rgba(228, 228, 231, 0.65);
+  --income-text: #15803D;
+  --income-container: rgba(220, 252, 231, 0.60);
+  --expense-text: #DC2626;
+  --expense-container: rgba(254, 226, 226, 0.60);
+  --transfer-text: #1D4ED8;
+  --transfer-container: rgba(219, 234, 254, 0.60);
+  --loan-text: #D97706;
+  --loan-container: rgba(254, 243, 199, 0.60);
+  --error-color: #DC2626;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Bengali', sans-serif;
+  overflow-x: hidden;
+  user-select: none;
+}
+
+input, textarea, select {
+  user-select: text;
+  font-family: inherit;
+}
+
+/* Carbon Fiber Weave Background Layer matching Theme.kt CarbonFiberBackground */
+#carbon-fiber-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--bg-base);
+  background-image:
+    radial-gradient(circle at 88% 8%, rgba(var(--accent-rgb), 0.13) 0%, transparent 48%),
+    radial-gradient(circle at 12% 88%, rgba(var(--accent-rgb), 0.08) 0%, transparent 52%),
+    linear-gradient(45deg, rgba(28, 28, 31, 0.85) 25%, transparent 25%, transparent 75%, rgba(28, 28, 31, 0.85) 75%, rgba(28, 28, 31, 0.85)),
+    linear-gradient(45deg, rgba(42, 42, 46, 0.75) 25%, rgba(10, 10, 11, 0.85) 25%, rgba(10, 10, 11, 0.85) 75%, rgba(42, 42, 46, 0.75) 75%, rgba(42, 42, 46, 0.75));
+  background-size: 100% 100%, 100% 100%, 12px 12px, 12px 12px;
+  background-position: 0 0, 0 0, 0 0, 6px 6px;
+}
+
+body.theme-light #carbon-fiber-bg {
+  background-image:
+    radial-gradient(circle at 88% 8%, rgba(var(--accent-rgb), 0.08) 0%, transparent 48%),
+    radial-gradient(circle at 12% 88%, rgba(var(--accent-rgb), 0.05) 0%, transparent 52%),
+    linear-gradient(45deg, rgba(236, 236, 240, 0.65) 25%, transparent 25%, transparent 75%, rgba(236, 236, 240, 0.65) 75%, rgba(236, 236, 240, 0.65)),
+    linear-gradient(45deg, rgba(226, 226, 231, 0.55) 25%, rgba(248, 248, 250, 0.65) 25%, rgba(248, 248, 250, 0.65) 75%, rgba(226, 226, 231, 0.55) 75%, rgba(226, 226, 231, 0.55));
+  background-size: 100% 100%, 100% 100%, 12px 12px, 12px 12px;
+  background-position: 0 0, 0 0, 0 0, 6px 6px;
+}
+
+#custom-wallpaper-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: opacity 0.2s ease;
+}
+
+/* Main App Container - Responsive Mobile/Tablet Column matching Modifier.widthIn(max = 600.dp) */
+#app-shell {
+  position: relative;
+  z-index: 2;
+  max-width: 560px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  transition: filter 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+#app-shell.blurred-12 {
+  filter: blur(12px);
+  pointer-events: none;
+}
+
+/* Pocket Cards & Surfaces */
+.pocket-card {
+  background: var(--surface-box);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: transform 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.pocket-card-hero {
+  background: var(--surface-box);
+  border: 1px solid var(--card-border);
+  border-radius: 24px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.pocket-card-elevated {
+  background: var(--surface-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+}
+
+.pocket-card-selected {
+  background: var(--surface-selected);
+  border: 1.5px solid var(--accent-color);
+  border-radius: 14px;
+}
+
+.pocket-clickable {
+  cursor: pointer;
+}
+.pocket-clickable:active {
+  transform: scale(0.985);
+}
+
+/* Tabular Money Typography matching TabularMoneyLarge / Medium / Small */
+.tabular-money-lg {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-size: 1.85rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.tabular-money-md {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.tabular-money-sm {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+/* IconBadgeCircle & Recolored PNG Wallet Icons */
+.icon-badge-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.wallet-png-tinted {
+  width: 68%;
+  height: 68%;
+  object-fit: contain;
+  filter: url(#pocket-wallet-tint);
+}
+
+/* Liquid Bottom Navigation Bar matching LiquidBottomNavigationBar in PocketComponents.kt */
+.liquid-bottom-nav-wrap {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 6px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  pointer-events: none;
+}
+
+.liquid-bottom-nav {
+  pointer-events: auto;
+  max-width: 532px;
+  margin: 0 auto;
+  height: 68px;
+  border-radius: 26px;
+  background: var(--surface-box);
+  border: 1px solid var(--card-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: center;
+  padding: 6px;
+}
+
+.liquid-pill-indicator {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: calc((100% - 12px) / 4);
+  border-radius: 20px;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.28), rgba(var(--accent-rgb), 0.16));
+  border: 1px solid rgba(var(--accent-rgb), 0.65);
+  transition: transform 0.34s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 0;
+}
+
+.liquid-nav-item {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border-radius: 20px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color 0.2s ease, transform 0.2s ease;
+  gap: 2px;
+}
+
+.liquid-nav-item.active {
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+.liquid-nav-item .material-symbols-rounded {
+  font-size: 22px;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.liquid-nav-item.active .material-symbols-rounded {
+  transform: scale(1.1);
+  font-variation-settings: 'FILL' 1, 'wght' 600, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Outlined & Filled Inputs matching OutlinedTextField in Material 3 */
+.pocket-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pocket-input-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding-left: 2px;
+}
+
+.pocket-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: rgba(var(--elevated-rgb), 0.45);
+  border: 1px solid var(--card-border);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.pocket-input:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.22);
+}
+
+.pocket-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* Filter Chips & Buttons */
+.pocket-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 13px;
+  border-radius: 10px;
+  font-size: 0.81rem;
+  font-weight: 600;
+  background: var(--surface-elevated);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.16s ease;
+}
+
+.pocket-chip.selected {
+  background: var(--surface-selected);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+.pocket-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: var(--accent-color);
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 0.92rem;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.16s ease, transform 0.12s ease;
+}
+
+.pocket-btn-primary:hover {
+  opacity: 0.94;
+}
+
+.pocket-btn-primary:active {
+  transform: scale(0.98);
+}
+
+.pocket-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pocket-btn-outlined {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  border: 1px solid var(--card-border);
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.pocket-btn-outlined:hover {
+  background: var(--surface-elevated);
+}
+
+.pocket-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: var(--error-color);
+  color: #FFFFFF;
+  font-weight: 700;
+  font-size: 0.92rem;
+  border: none;
+  cursor: pointer;
+}
+
+/* Modal & Dialog Overlay with 0.28f Black Scrim */
+#modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.36);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+#modal-backdrop.open {
+  display: flex;
+  animation: pocketFadeIn 0.18s ease-out;
+}
+
+.pocket-dialog {
+  width: 100%;
+  max-width: 440px;
+  max-height: 88dvh;
+  overflow-y: auto;
+  background: var(--overlay-surface);
+  border: 1px solid var(--card-border);
+  border-radius: 24px;
+  padding: 20px;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  animation: pocketScaleIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Speed-Dial FAB */
+.pocket-fab-container {
+  position: fixed;
+  right: max(18px, calc(50vw - 260px));
+  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.pocket-fab-main {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  background: var(--accent-color);
+  color: #FFFFFF;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 26px rgba(var(--accent-rgb), 0.45);
+  cursor: pointer;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pocket-fab-main.expanded {
+  transform: rotate(45deg);
+}
+
+.pocket-fab-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 16px;
+  background: var(--overlay-surface);
+  border: 1px solid var(--card-border);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.88rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  animation: pocketSlideUp 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Custom Switch matching Material 3 Switch */
+.pocket-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.pocket-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.pocket-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: var(--surface-elevated);
+  border: 1.5px solid var(--card-border);
+  transition: 0.2s;
+  border-radius: 28px;
+}
+
+.pocket-switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 3px;
+  bottom: 2.5px;
+  background-color: var(--text-muted);
+  transition: 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-radius: 50%;
+}
+
+.pocket-switch input:checked + .pocket-switch-slider {
+  background-color: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.pocket-switch input:checked + .pocket-switch-slider:before {
+  transform: translateX(19px);
+  background-color: #FFFFFF;
+}
+
+/* Thin Slider matching PocketThinSlider */
+input[type="range"].pocket-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--surface-elevated);
+  outline: none;
+}
+
+input[type="range"].pocket-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-color);
+  border: 2px solid #FFFFFF;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+/* Horizontal Scrollbar Hiding */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Toast / Snackbar Banner */
+#pocket-snackbar {
+  position: fixed;
+  bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 80;
+  max-width: 92vw;
+  width: max-content;
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: var(--overlay-card);
+  border: 1px solid var(--accent-color);
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 600;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+#pocket-snackbar.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+@keyframes pocketFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pocketScaleIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pocketSlideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media print {
+  #carbon-fiber-bg,
+  #custom-wallpaper-layer,
+  .liquid-bottom-nav-wrap,
+  .pocket-fab-container,
+  #pocket-snackbar,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #FFFFFF !important;
+    color: #000000 !important;
+  }
+  #app-shell {
+    max-width: 100% !important;
+    filter: none !important;
+  }
+}
