@@ -98,7 +98,7 @@ export const AppState = {
 
   // Onboarding UI State
   onboardingShowAllWallets: false,
-  onboardingSelectedIds: new Set([1, 2, 5]), // Cash, Bank, Bkash
+  onboardingSelectedIds: new Set(), // initially all unchecked, matching Android
   onboardingBalances: {},
   onboardingLoans: [{ direction: 'LENT', personName: '', amount: '', loanDateMs: Date.now(), dueDateMs: null }],
 
@@ -625,7 +625,14 @@ function renderOnboardingScreen() {
 
       <!-- Starter Wallets Selection -->
       <div class="pocket-card" style="padding:16px;display:flex;flex-direction:column;gap:12px;">
-        <h3 style="margin:0;font-size:1.05rem;font-weight:700;">${t('Choose Wallets & Current Balances')}</h3>
+        <div>
+          <h3 style="margin:0;font-size:1.05rem;font-weight:700;">${t('Choose Wallets & Current Balances')}</h3>
+          ${!SubscriptionManager.isSubscriptionActive(AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt) ? `
+            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:2px;">
+              ${t('Free tier: Choose any 3 default wallets')} (${AppState.onboardingSelectedIds.size}/3)
+            </div>
+          ` : ''}
+        </div>
         ${visibleWallets.map(w => {
           const sel = AppState.onboardingSelectedIds.has(w.id);
           const balVal = AppState.onboardingBalances[w.id] ?? '';
@@ -1890,6 +1897,15 @@ function renderSettingsScreen(derived) {
               </div>
             `;
           }).join('')}
+          ${(() => {
+            const isCustomBox = Boolean(s.boxColorHex && !boxPresets.some(([h]) => h.toUpperCase() === String(s.boxColorHex).toUpperCase()));
+            return `
+              <label style="width:38px;height:38px;border-radius:50%;background:conic-gradient(red, yellow, lime, aqua, blue, magenta, red);border:${isCustomBox ? '2.5px solid var(--accent-color)' : '1.5px solid var(--card-border)'};display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;" title="${t('Custom Box Color')}" onclick="if(!${isPremium}) { event.preventDefault(); window.PocketApp.openUpgradeDialog(t('Custom box color picker is a Pocket Premium feature. Carbon, Slate, and Box Opacity are free.')); }">
+                <input type="color" value="${escHtml(s.boxColorHex || (isDark ? '#141416' : '#FFFFFF'))}" style="opacity:0;width:0;height:0;position:absolute;pointer-events:${isPremium ? 'auto' : 'none'};" onchange="window.PocketApp.selectCustomBoxColor(this.value)" />
+                ${!isPremium ? `<span class="material-symbols-rounded" style="font-size:14px;color:#FFF;background:rgba(0,0,0,0.45);border-radius:50%;padding:4px;">lock</span>` : isCustomBox ? `<span class="material-symbols-rounded" style="font-size:18px;color:#FFF;background:rgba(0,0,0,0.45);border-radius:50%;padding:2px;">check</span>` : ''}
+              </label>
+            `;
+          })()}
         </div>
 
         <div>
@@ -2217,11 +2233,24 @@ window.PocketApp = {
   selectBoxColor(hex) {
     const allowed = SubscriptionManager.isBoxColorAllowed(hex, AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt);
     if (!allowed) {
-      this.openUpgradeDialog("Carbon and Slate box colors are free. Upgrade to Pocket Premium to unlock Midnight, Emerald, Burgundy, and custom box colors.");
+      this.openUpgradeDialog(t("Carbon and Slate box colors are free. Upgrade to Pocket Premium to unlock Midnight, Emerald, Burgundy, and custom box colors."));
       return;
     }
     AppState.settings.boxColorHex = hex;
     saveStateToLocal();
+    applyThemeAndAccentVariables();
+    renderApp();
+  },
+
+  selectCustomBoxColor(hex) {
+    const isPro = SubscriptionManager.isSubscriptionActive(AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt);
+    if (!isPro) {
+      this.openUpgradeDialog(t("Custom box color picker is a Pocket Premium feature. Carbon, Slate, and Box Opacity are free."));
+      return;
+    }
+    AppState.settings.boxColorHex = hex;
+    saveStateToLocal();
+    applyThemeAndAccentVariables();
     renderApp();
   },
 
@@ -2307,9 +2336,14 @@ window.PocketApp = {
   },
 
   toggleOnboardingWallet(wId) {
+    const isPro = SubscriptionManager.isSubscriptionActive(AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt);
     if (AppState.onboardingSelectedIds.has(wId)) {
-      if (AppState.onboardingSelectedIds.size > 1) AppState.onboardingSelectedIds.delete(wId);
+      AppState.onboardingSelectedIds.delete(wId);
     } else {
+      if (!isPro && AppState.onboardingSelectedIds.size >= SubscriptionManager.FREE_DEFAULT_WALLETS_LIMIT) {
+        this.openUpgradeDialog(t("Free tier allows choosing any 3 default wallets. Upgrade to Pocket Premium for unlimited wallets."));
+        return;
+      }
       AppState.onboardingSelectedIds.add(wId);
     }
     renderApp();
@@ -2348,7 +2382,9 @@ window.PocketApp = {
   },
 
   finishOnboarding() {
-    const selectedIds = AppState.onboardingSelectedIds;
+    const selectedIds = AppState.onboardingSelectedIds.size > 0
+      ? AppState.onboardingSelectedIds
+      : new Set([1]); // Default to Cash wallet if none checked
     AppState.wallets = AppState.wallets.map(w => ({
       ...w,
       isArchived: !selectedIds.has(w.id),
@@ -2500,7 +2536,7 @@ window.PocketApp = {
       startOfDay.setHours(0, 0, 0, 0);
       const todayCount = AppState.transactions.filter(t => t.date >= startOfDay.getTime()).length;
       if (!SubscriptionManager.canAddTransactionToday(todayCount, AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt)) {
-        this.openUpgradeDialog('Free tier allows up to 5 transactions per day. Upgrade to Pocket Premium for unlimited daily entries.');
+        this.openUpgradeDialog(t('Free tier allows up to 10 transactions per day. Upgrade to Pocket Premium for unlimited daily entries.'));
         return;
       }
     }
@@ -2732,9 +2768,10 @@ window.PocketApp = {
     AppState.isFabExpanded = false;
     const existing = editId ? AppState.wallets.find(w => w.id === editId) : null;
     if (!existing) {
-      const activeCount = AppState.wallets.filter(w => !w.isArchived).length;
-      if (!SubscriptionManager.canAddWallet(activeCount, AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt)) {
-        this.openUpgradeDialog('Free tier allows up to 4 active wallets. Upgrade to Pocket Premium for unlimited wallets.');
+      const activeWallets = AppState.wallets.filter(w => !w.isArchived);
+      const isPro = SubscriptionManager.isSubscriptionActive(AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt);
+      if (!isPro && activeWallets.length >= SubscriptionManager.FREE_DEFAULT_WALLETS_LIMIT) {
+        this.openUpgradeDialog(t('Free tier allows up to 3 active wallets. Upgrade to Pocket Premium for unlimited wallets.'));
         return;
       }
     }
@@ -2798,6 +2835,15 @@ window.PocketApp = {
         };
       }
     } else {
+      const activeWallets = AppState.wallets.filter(w => !w.isArchived);
+      if (!SubscriptionManager.canAddWallet(activeWallets, name, AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt)) {
+        if (!SubscriptionManager.isStarterWallet(name)) {
+          this.openUpgradeDialog(t('Custom wallets are a Pocket Premium feature. Free tier allows choosing up to 3 default wallets.'));
+        } else {
+          this.openUpgradeDialog(t('Free tier allows up to 3 active wallets. Upgrade to Pocket Premium for unlimited wallets.'));
+        }
+        return;
+      }
       AppState.wallets.push({
         id: Date.now(),
         name,
@@ -2925,6 +2971,11 @@ window.PocketApp = {
     const note = (document.getElementById('dlg-loan-note')?.value || '').trim();
     if (!person || amt <= 0) {
       showSnackbar('Please enter person name and principal amount.');
+      return;
+    }
+    const existingPersons = Array.from(new Set(AppState.loans.map(l => String(l.personName || '').trim().toLowerCase()))).filter(Boolean);
+    if (!SubscriptionManager.canAddLoanPerson(existingPersons, person, AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt)) {
+      this.openUpgradeDialog(t('Free tier allows loans for up to 2 persons. Upgrade to Pocket Premium for unlimited loan records.'));
       return;
     }
     AppState.loans.push({
@@ -3258,6 +3309,11 @@ window.PocketApp = {
         AppState.categories[idx] = { ...AppState.categories[idx], name, type, monthlyBudget: AccountingEngine.roundCurrency(budget) };
       }
     } else {
+      const customCount = AppState.categories.filter(c => c.isDefault === false || c.id > 1000).length;
+      if (!SubscriptionManager.canAddCategory(type, customCount, AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt)) {
+        this.openUpgradeDialog(t('Free tier allows 1 custom category. Upgrade to Pocket Premium for unlimited custom categories.'));
+        return;
+      }
       AppState.categories.push({
         id: Date.now(),
         name,
@@ -3313,6 +3369,11 @@ window.PocketApp = {
     const amount = parseFloat(document.getElementById('dlg-rec-amount')?.value) || 0;
     const frequency = document.getElementById('dlg-rec-freq')?.value || 'MONTHLY';
     if (!title) return;
+    const activeCount = AppState.recurringTransactions.filter(r => r.isActive !== false).length;
+    if (!SubscriptionManager.canAddRecurringBill(activeCount, AppState.settings.subscriptionTier, AppState.settings.subscriptionExpiresAt)) {
+      this.openUpgradeDialog(t('Free tier allows up to 2 recurring bills. Upgrade to Pocket Premium for unlimited recurring bills.'));
+      return;
+    }
     AppState.recurringTransactions.push({
       id: Date.now(),
       title,

@@ -626,21 +626,28 @@ export const AccountingEngine = {
 };
 
 export const SubscriptionManager = {
-  FREE_MAX_WALLETS: 4,
-  FREE_MAX_DAILY_TRANSACTIONS: 5,
-  FREE_MAX_TOTAL_LOANS: 2,
-  FREE_MAX_EXPENSE_CATEGORIES: 7,
-  FREE_MAX_INCOME_CATEGORIES: 4,
-  FREE_MAX_RECURRING_BILLS: 2,
+  FREE_DAILY_TRANSACTIONS_LIMIT: 10,
+  FREE_DEFAULT_WALLETS_LIMIT: 3,
+  FREE_CUSTOM_WALLETS_LIMIT: 0,
+  FREE_LOAN_PERSONS_LIMIT: 2,
+  FREE_SAVINGS_GOALS_LIMIT: 2,
+  FREE_RECURRING_BILLS_LIMIT: 2,
+  FREE_CUSTOM_CATEGORIES_LIMIT: 1,
+
+  STARTER_WALLET_NAMES: new Set([
+    'cash', 'bank', 'mtb', 'brac', 'bkash', 'nagad', 'rocket', 'rapid pass', 'card', 'savings',
+    'ক্যাশ', 'ব্যাংক', 'এমটিবি', 'ব্র্যাক', 'বিকাশ', 'নগদ', 'রকেট', 'র‍্যাপিড পাস', 'কার্ড', 'সেভিংস'
+  ]),
+
   FREE_ALLOWED_ACCENT_HEXES: new Set(['#F15A24', '#14B8A6']),
-  FREE_ALLOWED_BOX_HEXES: new Set(['', '#141416', '#1E293B', '#FFFFFF']),
+  FREE_ALLOWED_BOX_HEXES: new Set(['', '#141416', '#1E293B', '#101726', '#FFFFFF']),
   THREE_DAYS_MILLIS: 3 * 24 * 60 * 60 * 1000,
 
   resolveActiveTier(tierString, expiresAtMillis, nowMillis = Date.now()) {
     const t = String(tierString || 'FREE').toUpperCase();
     if (t === 'LIFETIME') return 'LIFETIME';
-    if (t === 'THREE_DAYS') {
-      if (expiresAtMillis && Number(expiresAtMillis) > nowMillis) return 'THREE_DAYS';
+    if (t === 'THREE_DAYS' || t === 'TRIAL_3_DAYS') {
+      if (expiresAtMillis && Number(expiresAtMillis) > nowMillis) return t;
       return 'FREE';
     }
     return 'FREE';
@@ -650,32 +657,42 @@ export const SubscriptionManager = {
     return this.resolveActiveTier(tierString, expiresAtMillis, nowMillis) !== 'FREE';
   },
 
-  canAddWallet(currentActiveWalletCount, tierString, expiresAtMillis) {
+  isStarterWallet(walletName) {
+    return this.STARTER_WALLET_NAMES.has(String(walletName || '').trim().toLowerCase());
+  },
+
+  canAddWallet(existingWallets = [], newWalletName = '', tierString, expiresAtMillis) {
     if (this.isSubscriptionActive(tierString, expiresAtMillis)) return true;
-    return currentActiveWalletCount < this.FREE_MAX_WALLETS;
+    const isStarter = this.isStarterWallet(newWalletName);
+    if (isStarter) {
+      return existingWallets.length < this.FREE_DEFAULT_WALLETS_LIMIT;
+    }
+    // Custom wallet
+    const customCount = existingWallets.filter(w => !this.isStarterWallet(w.name)).length;
+    return customCount < this.FREE_CUSTOM_WALLETS_LIMIT;
   },
 
   canAddTransactionToday(todayCount, tierString, expiresAtMillis) {
     if (this.isSubscriptionActive(tierString, expiresAtMillis)) return true;
-    return todayCount < this.FREE_MAX_DAILY_TRANSACTIONS;
+    return todayCount < this.FREE_DAILY_TRANSACTIONS_LIMIT;
   },
 
-  canAddLoan(totalLoanCount, tierString, expiresAtMillis) {
+  canAddLoanPerson(existingDistinctPersons = [], targetPersonName = '', tierString, expiresAtMillis) {
     if (this.isSubscriptionActive(tierString, expiresAtMillis)) return true;
-    return totalLoanCount < this.FREE_MAX_TOTAL_LOANS;
+    const key = String(targetPersonName || '').trim().toLowerCase();
+    const alreadyExists = existingDistinctPersons.some(p => String(p || '').trim().toLowerCase() === key);
+    if (alreadyExists) return true;
+    return existingDistinctPersons.length < this.FREE_LOAN_PERSONS_LIMIT;
   },
 
-  canAddCategory(categoryType, currentActiveTypeCount, tierString, expiresAtMillis) {
+  canAddCategory(categoryType, currentCustomCategoriesCount, tierString, expiresAtMillis) {
     if (this.isSubscriptionActive(tierString, expiresAtMillis)) return true;
-    if (String(categoryType).toUpperCase() === 'INCOME') {
-      return currentActiveTypeCount < this.FREE_MAX_INCOME_CATEGORIES;
-    }
-    return currentActiveTypeCount < this.FREE_MAX_EXPENSE_CATEGORIES;
+    return currentCustomCategoriesCount < this.FREE_CUSTOM_CATEGORIES_LIMIT;
   },
 
   canAddRecurringBill(currentRecurringCount, tierString, expiresAtMillis) {
     if (this.isSubscriptionActive(tierString, expiresAtMillis)) return true;
-    return currentRecurringCount < this.FREE_MAX_RECURRING_BILLS;
+    return currentRecurringCount < this.FREE_RECURRING_BILLS_LIMIT;
   },
 
   isAccentColorAllowed(hex, tierString, expiresAtMillis) {
