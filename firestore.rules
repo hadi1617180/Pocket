@@ -338,7 +338,8 @@ service cloud.firestore {
           'themeMode', 'defaultWalletId', 'warnOnNegativeBalance',
           'loanDeadlineNotificationEnabled', 'dailyExpenseReminderEnabled',
           'dailyReminderHour', 'dailyReminderMinute', 'backgroundOpacity',
-          'accentColorHex', 'masterMonthlyBudget', 'hideBalancesPrivacy',
+          'accentColorHex', 'boxColorHex', 'boxOpacity', 'appLanguage', 'dateFormatPattern',
+          'masterMonthlyBudget', 'hideBalancesPrivacy',
           'hasCompletedOnboarding', 'syncVersion', 'subscriptionTier',
           'subscriptionExpiresAt', 'activationCode', 'updatedAt'
         ]);

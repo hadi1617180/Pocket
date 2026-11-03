@@ -2298,11 +2298,10 @@ window.PocketApp = {
       if (snap && snap.payload && (snap.profile.hasCompletedOnboarding || snap.payload.wallets.length > 0)) {
         applyBackupPayloadToState(snap.payload, true);
         AppState.settings.hasCompletedOnboarding = true;
-        saveStateToLocal(true);
         PocketCloudSync.startRealtimeListeners(user.uid, (remote) => {
-          if (remote.updatedAtMillis > AppState.lastAppliedCloudMs) {
-            AppState.lastAppliedCloudMs = remote.updatedAtMillis;
+          if (remote?.payload) {
             applyBackupPayloadToState(remote.payload, true);
+            renderApp();
           }
         });
         showSnackbar(`Signed in as ${user.email}. Cloud backup loaded!`);
@@ -3519,9 +3518,9 @@ window.PocketApp = {
         showSnackbar('Local data backed up to Google account!');
       }
       PocketCloudSync.startRealtimeListeners(user.uid, (remote) => {
-        if (remote.updatedAtMillis > AppState.lastAppliedCloudMs) {
-          AppState.lastAppliedCloudMs = remote.updatedAtMillis;
+        if (remote?.payload) {
           applyBackupPayloadToState(remote.payload, true);
+          renderApp();
         }
       });
       renderApp();
@@ -3748,9 +3747,9 @@ window.addEventListener('DOMContentLoaded', () => {
           applyBackupPayloadToState(snap.payload, true);
         }
         PocketCloudSync.startRealtimeListeners(user.uid, (remote) => {
-          if (remote.updatedAtMillis > AppState.lastAppliedCloudMs) {
-            AppState.lastAppliedCloudMs = remote.updatedAtMillis;
+          if (remote?.payload) {
             applyBackupPayloadToState(remote.payload, true);
+            renderApp();
           }
         });
       } catch (e) {
