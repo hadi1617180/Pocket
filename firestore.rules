@@ -212,7 +212,7 @@ service cloud.firestore {
         && isStringOfSize(data.personName, 1, 150)
         && data.direction in ['LENT', 'BORROWED']
         && data.principalAmount is number && data.principalAmount >= 0
-        && data.initialWalletId is int && data.initialWalletId >= 1
+        && data.initialWalletId is int && data.initialWalletId >= 0
         && data.startDate is int && data.startDate >= 0
         && isOptionalInt(data, 'dueDate', 0, 9007199254740991)
         && data.interestRate is number && data.interestRate >= 0
@@ -237,7 +237,7 @@ service cloud.firestore {
         && data.activityType in ['DISBURSEMENT', 'REPAYMENT', 'ADJUSTMENT']
         && data.principalPortion is number && data.principalPortion >= 0
         && data.interestPortion is number && data.interestPortion >= 0
-        && data.walletId is int && data.walletId >= 1
+        && data.walletId is int && data.walletId >= 0
         && data.date is int && data.date >= 0
         && isStringOfSize(data.note, 0, 1000);
     }

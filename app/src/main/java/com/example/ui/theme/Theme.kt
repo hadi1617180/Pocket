@@ -208,7 +208,7 @@ fun CarbonFiberBackground(
     isDark: Boolean = true,
     accentColor: Color = ReddishOrangePrimary,
     customBackgroundUri: String = "",
-    backgroundOpacity: Float = 0.85f,
+    backgroundOpacity: Float = 0.20f,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
@@ -369,8 +369,8 @@ fun PocketTheme(
     themeMode: String = "DARK",
     accentColorHex: String = "#F15A24",
     customBackgroundUri: String = "",
-    backgroundOpacity: Float = 0.85f,
-    boxColorHex: String = "",
+    backgroundOpacity: Float = 0.20f,
+    boxColorHex: String = "#2A2A2A",
     boxOpacity: Float = 0.50f,
     appLanguage: String = "EN",
     content: @Composable () -> Unit
@@ -383,16 +383,16 @@ fun PocketTheme(
 
     val accentPrimary = parseAccentHex(accentColorHex)
     val accentHighlight = blendColors(accentPrimary, Color.White, 0.24f)
-    val darkSelected = blendColors(Color(0xFF141416), accentPrimary, 0.28f).copy(alpha = 0.55f)
+    val darkSelected = blendColors(Color(0xFF2A2A2A), accentPrimary, 0.28f).copy(alpha = 0.55f)
     val lightSelected = blendColors(Color.White, accentPrimary, 0.16f).copy(alpha = 0.75f)
-    val darkPrimaryContainer = blendColors(Color(0xFF141416), accentPrimary, 0.34f).copy(alpha = 0.65f)
+    val darkPrimaryContainer = blendColors(Color(0xFF2A2A2A), accentPrimary, 0.34f).copy(alpha = 0.65f)
     val lightPrimaryContainer = blendColors(Color.White, accentPrimary, 0.20f).copy(alpha = 0.80f)
 
     val clampedBoxAlpha = boxOpacity.coerceIn(0.15f, 1.0f)
     val baseBoxColor = if (boxColorHex.isNotBlank()) {
         parseAccentHex(boxColorHex)
     } else if (isDark) {
-        Color(0xFF141416)
+        Color(0xFF2A2A2A)
     } else {
         Color.White
     }
@@ -400,7 +400,7 @@ fun PocketTheme(
     val baseElevatedColor = if (boxColorHex.isNotBlank()) {
         blendColors(baseBoxColor, if (isDark) Color.White else Color.Black, 0.08f)
     } else if (isDark) {
-        Color(0xFF1E1E22)
+        Color(0xFF333338)
     } else {
         Color(0xFFF3F4F6)
     }

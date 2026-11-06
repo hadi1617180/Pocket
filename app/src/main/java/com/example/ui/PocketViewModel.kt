@@ -18,7 +18,7 @@ import java.io.File
 import java.util.Calendar
 
 enum class BottomNavTab(val label: String) {
-    BALANCES("Balances"),
+    BALANCES("Wallets"),
     RECENT_TRANSACTIONS("History"),
     REPORTS("Report"),
     LOANS("Loans")
@@ -51,6 +51,7 @@ sealed class PocketScreen {
     data class BalanceAdjustment(val preselectedWalletId: Long? = null) : PocketScreen()
     data object BackupRestore : PocketScreen()
     data object WidgetConfig : PocketScreen()
+    data object FundFeatureGuide : PocketScreen()
 }
 
 enum class CloudConflictChoice {
@@ -102,6 +103,7 @@ data class PocketUiState(
     val pendingCloudConflict: CloudAccountSnapshot? = null,
     val unifiedLedger: List<UnifiedLedgerEntry> = emptyList(),
     val monthlyReport: MonthlyReportSummary? = null,
+    val currentMonthReport: MonthlyReportSummary? = null,
     val statusMessage: String? = null,
     val googleAccountEmail: String? = null,
     val googleAccountName: String? = null,
@@ -129,6 +131,49 @@ data class PocketUiState(
 
     val isDeveloperAdmin: Boolean
         get() = googleAccountEmail?.trim()?.equals("hadi1617180@gmail.com", ignoreCase = true) == true
+
+    val isFundEnabled: Boolean
+        get() = settings.fundFeatureEnabled && isSubscriptionActive
+
+    val primaryFundWalletSummary: WalletBalanceSummary?
+        get() = if (isFundEnabled) activeWalletSummaries.firstOrNull { it.wallet.isFundWallet } else null
+
+    val hasDedicatedFundWallet: Boolean
+        get() = primaryFundWalletSummary != null
+
+    val fundEnabledSummaries: List<WalletBalanceSummary>
+        get() = if (isFundEnabled) activeWalletSummaries.filter { it.hasVirtualFund } else emptyList()
+
+    val hasActiveVirtualFund: Boolean
+        get() = isFundEnabled && fundEnabledSummaries.isNotEmpty()
+
+    val totalFundCashBalance: Double
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(
+            activeWalletSummaries.filter { it.wallet.isFundWallet }.sumOf { it.currentBalance }
+        )
+
+    val totalFundInOtherWallets: Double
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(
+            activeWalletSummaries.filter { !it.wallet.isFundWallet && it.hasVirtualFund }.sumOf { it.fundBalance }
+        )
+
+    val totalFundBalance: Double
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(fundEnabledSummaries.sumOf { it.fundBalance })
+
+    val totalFundOfficialSpent: Double
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(fundEnabledSummaries.sumOf { it.fundOfficialSpent })
+
+    val totalFundBorrowedTotal: Double
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(fundEnabledSummaries.sumOf { it.fundBorrowedTotal })
+
+    val totalFundReturnedTotal: Double
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(fundEnabledSummaries.sumOf { it.fundReturnedTotal })
+
+    val totalFundBorrowedDue: Double
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(
+            kotlin.math.max(0.0, totalFundBorrowedTotal - totalFundReturnedTotal)
+        )
+
     val personLoanKhataSummaries: List<PersonLoanKhataSummary>
         get() = loanSummaries
             .groupBy { it.loan.personName.trim().lowercase(java.util.Locale.ENGLISH) }
@@ -594,7 +639,8 @@ class PocketViewModel(
                     appLanguage = currentSettings.appLanguage.ifBlank { remoteSnapshot.payload.settings.appLanguage.ifBlank { "EN" } },
                     subscriptionTier = if (keepLocalSub) currentSettings.subscriptionTier else remoteSnapshot.payload.settings.subscriptionTier,
                     subscriptionExpiresAt = if (keepLocalSub) currentSettings.subscriptionExpiresAt else remoteSnapshot.payload.settings.subscriptionExpiresAt,
-                    activationCode = if (keepLocalSub) currentSettings.activationCode else remoteSnapshot.payload.settings.activationCode
+                    activationCode = if (keepLocalSub) currentSettings.activationCode else remoteSnapshot.payload.settings.activationCode,
+                    fundFeatureEnabled = remoteSnapshot.payload.settings.fundFeatureEnabled || currentSettings.fundFeatureEnabled
                 )
                 PocketLocalizer.currentLanguage = restoredSettings.appLanguage
                 repository.restoreBackupPayload(
@@ -767,7 +813,8 @@ class PocketViewModel(
                         appLanguage = localSettings.appLanguage.ifBlank { remoteSettings.appLanguage.ifBlank { "EN" } },
                         subscriptionTier = if (keepLocalSub) localSettings.subscriptionTier else remoteSettings.subscriptionTier,
                         subscriptionExpiresAt = if (keepLocalSub) localSettings.subscriptionExpiresAt else remoteSettings.subscriptionExpiresAt,
-                        activationCode = if (keepLocalSub) localSettings.activationCode else remoteSettings.activationCode
+                        activationCode = if (keepLocalSub) localSettings.activationCode else remoteSettings.activationCode,
+                        fundFeatureEnabled = basePayload.settings.fundFeatureEnabled || localSettings.fundFeatureEnabled || remoteSettings.fundFeatureEnabled
                     )
                 )
 
@@ -900,7 +947,8 @@ class PocketViewModel(
                                     appLanguage = remoteSettings.appLanguage.ifBlank { localSettings.appLanguage.ifBlank { "EN" } },
                                     subscriptionTier = if (keepLocalSub) localSettings.subscriptionTier else remoteSettings.subscriptionTier,
                                     subscriptionExpiresAt = if (keepLocalSub) localSettings.subscriptionExpiresAt else remoteSettings.subscriptionExpiresAt,
-                                    activationCode = if (keepLocalSub) localSettings.activationCode else remoteSettings.activationCode
+                                    activationCode = if (keepLocalSub) localSettings.activationCode else remoteSettings.activationCode,
+                                    fundFeatureEnabled = remoteSettings.fundFeatureEnabled || localSettings.fundFeatureEnabled
                                 )
                                 PocketLocalizer.currentLanguage = mergedSettings.appLanguage
                                 repository.restoreBackupPayload(
@@ -932,30 +980,82 @@ class PocketViewModel(
 
     fun syncCloudNow() {
         val authState = _cloudAuthState.value
-        val uid = authState.uid ?: return
-        val cloudRepo = cloudSyncRepository ?: return
+        val uid = authState.uid
+        val cloudRepo = cloudSyncRepository
+        if (uid == null || cloudRepo == null) {
+            _statusMessage.value = "Local balances are up to date. Sign in with Google in Settings for cloud sync."
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             _cloudAuthState.update { it.copy(isSyncing = true, lastSyncStatus = "Syncing with Google Cloud...") }
             runCatching {
-                val payload = repository.buildBackupPayload()
-                val nextVersion = maxOf(System.currentTimeMillis(), lastKnownSyncVersion + 1L)
-                lastKnownSyncVersion = nextVersion
-                cloudRepo.pushLocalPayloadToCloud(
-                    userId = uid,
-                    email = authState.email ?: "",
-                    googleDisplayName = authState.displayName ?: "",
-                    googlePhotoUrl = authState.photoUrl ?: "",
-                    payload = payload,
-                    syncVersion = nextVersion
-                )
-                _cloudAuthState.update {
-                    it.copy(
-                        isSyncing = false,
-                        lastSyncStatus = "All data synced to Google Cloud"
+                val currentPayload = repository.buildBackupPayload()
+                val remoteSnapshot = cloudRepo.pullCloudPayloadIfPresent(uid, currentPayload.settings)
+                if (remoteSnapshot != null &&
+                    remoteSnapshot.profile.hasCompletedOnboarding &&
+                    remoteSnapshot.profile.syncVersion > lastKnownSyncVersion
+                ) {
+                    isApplyingRemoteSnapshot = true
+                    try {
+                        lastKnownSyncVersion = remoteSnapshot.profile.syncVersion
+                        val localSettings = currentPayload.settings
+                        val remoteSettings = remoteSnapshot.payload.settings
+                        val keepLocalSub = SubscriptionManager.isSubscriptionActive(
+                            localSettings.subscriptionTier,
+                            localSettings.subscriptionExpiresAt
+                        ) && !SubscriptionManager.isSubscriptionActive(
+                            remoteSettings.subscriptionTier,
+                            remoteSettings.subscriptionExpiresAt
+                        )
+                        val mergedSettings = remoteSettings.copy(
+                            appLanguage = remoteSettings.appLanguage.ifBlank { localSettings.appLanguage.ifBlank { "EN" } },
+                            subscriptionTier = if (keepLocalSub) localSettings.subscriptionTier else remoteSettings.subscriptionTier,
+                            subscriptionExpiresAt = if (keepLocalSub) localSettings.subscriptionExpiresAt else remoteSettings.subscriptionExpiresAt,
+                            activationCode = if (keepLocalSub) localSettings.activationCode else remoteSettings.activationCode,
+                            fundFeatureEnabled = remoteSettings.fundFeatureEnabled || localSettings.fundFeatureEnabled
+                        )
+                        PocketLocalizer.currentLanguage = mergedSettings.appLanguage
+                        repository.restoreBackupPayload(
+                            remoteSnapshot.payload.copy(
+                                settings = mergedSettings,
+                                recurringTransactions = remoteSnapshot.payload.recurringTransactions.ifEmpty {
+                                    currentPayload.recurringTransactions
+                                }
+                            )
+                        )
+                    } finally {
+                        isApplyingRemoteSnapshot = false
+                    }
+                    _cloudAuthState.update {
+                        it.copy(
+                            isSyncing = false,
+                            lastSyncStatus = "Synced latest changes from Google Cloud"
+                        )
+                    }
+                    withContext(Dispatchers.Main) {
+                        _statusMessage.value = "Synced latest changes from Google Cloud."
+                        notifyWidgetsChanged()
+                    }
+                } else {
+                    val nextVersion = maxOf(System.currentTimeMillis(), lastKnownSyncVersion + 1L)
+                    lastKnownSyncVersion = nextVersion
+                    cloudRepo.pushLocalPayloadToCloud(
+                        userId = uid,
+                        email = authState.email ?: "",
+                        googleDisplayName = authState.displayName ?: "",
+                        googlePhotoUrl = authState.photoUrl ?: "",
+                        payload = currentPayload,
+                        syncVersion = nextVersion
                     )
-                }
-                withContext(Dispatchers.Main) {
-                    _statusMessage.value = "Synced all wallets, transactions, loans, and profile with Google Cloud."
+                    _cloudAuthState.update {
+                        it.copy(
+                            isSyncing = false,
+                            lastSyncStatus = "All data synced to Google Cloud"
+                        )
+                    }
+                    withContext(Dispatchers.Main) {
+                        _statusMessage.value = "Synced all wallets, transactions, loans, and profile with Google Cloud."
+                    }
                 }
             }.onFailure { err ->
                 _cloudAuthState.update {
@@ -1125,11 +1225,23 @@ class PocketViewModel(
         val onboardingOverride = extraList[7] as Boolean?
         val rawSettings = db.settings ?: AppSettingsEntity()
         val effectiveHasCompletedOnboarding = onboardingOverride ?: rawSettings.hasCompletedOnboarding
+        val normalizedBoxHex = if (rawSettings.boxColorHex.isBlank() || rawSettings.boxColorHex.equals("#141416", ignoreCase = true)) {
+            "#2A2A2A"
+        } else {
+            rawSettings.boxColorHex
+        }
+        val normalizedBgOpacity = if (kotlin.math.abs(rawSettings.backgroundOpacity - 0.85f) < 0.01f) {
+            0.20f
+        } else {
+            rawSettings.backgroundOpacity
+        }
         val settings = rawSettings.copy(
             currencyCode = "BDT",
             currencySymbol = "৳",
             hasCompletedOnboarding = effectiveHasCompletedOnboarding,
-            appLanguage = rawSettings.appLanguage.ifBlank { "EN" }
+            appLanguage = rawSettings.appLanguage.ifBlank { "EN" },
+            boxColorHex = normalizedBoxHex,
+            backgroundOpacity = normalizedBgOpacity
         )
         PocketLocalizer.currentLanguage = settings.appLanguage
         val effectiveUnlocked = !settings.appLockEnabled || settings.appLockPin.isBlank() || unlocked
@@ -1140,16 +1252,22 @@ class PocketViewModel(
             }.thenBy { it.id }
         )
 
-        val walletSummaries = sortedWallets.map { w ->
-            AccountingEngine.calculateWalletSummary(
-                wallet = w,
-                transactions = db.transactions,
-                transfers = db.transfers,
-                loans = db.loans,
-                loanActivities = db.loanActivities,
-                adjustments = db.adjustments
-            )
-        }
+        val isFundEnabled = settings.fundFeatureEnabled &&
+            SubscriptionManager.isSubscriptionActive(settings.subscriptionTier, settings.subscriptionExpiresAt)
+
+        val walletSummaries = sortedWallets
+            .filter { isFundEnabled || !it.isFundWallet }
+            .map { w ->
+                AccountingEngine.calculateWalletSummary(
+                    wallet = w,
+                    transactions = db.transactions,
+                    transfers = db.transfers,
+                    loans = db.loans,
+                    loanActivities = db.loanActivities,
+                    adjustments = db.adjustments,
+                    fundFeatureEnabled = isFundEnabled
+                )
+            }
         val activeSummaries = walletSummaries.filter { !it.wallet.isArchived }
         val archivedSummaries = walletSummaries.filter { it.wallet.isArchived }
         val totalBalance = AccountingEngine.roundCurrency(
@@ -1194,7 +1312,8 @@ class PocketViewModel(
             transfers = db.transfers,
             loans = db.loans,
             loanActivities = db.loanActivities,
-            adjustments = db.adjustments
+            adjustments = db.adjustments,
+            fundFeatureEnabled = isFundEnabled
         )
 
         val monthlyReport = AccountingEngine.calculateMonthlyReport(
@@ -1207,6 +1326,24 @@ class PocketViewModel(
             wallets = sortedWallets,
             reportCurrency = activeReportCurrency
         )
+
+        val calNow = Calendar.getInstance()
+        val currentYear = calNow.get(Calendar.YEAR)
+        val currentMonth = calNow.get(Calendar.MONTH)
+        val currentMonthReport = if (year == currentYear && month == currentMonth && activeReportCurrency == "BDT") {
+            monthlyReport
+        } else {
+            AccountingEngine.calculateMonthlyReport(
+                year = currentYear,
+                month = currentMonth,
+                transactions = db.transactions,
+                categories = db.categories,
+                loans = db.loans,
+                loanActivities = db.loanActivities,
+                wallets = sortedWallets,
+                reportCurrency = "BDT"
+            )
+        }
 
         val currentScreen = navStack.lastOrNull() ?: PocketScreen.Wallets
         val bottomTab = when (currentScreen) {
@@ -1247,6 +1384,7 @@ class PocketViewModel(
             pendingCloudConflict = cloudAuth.pendingConflict,
             unifiedLedger = ledger,
             monthlyReport = monthlyReport,
+            currentMonthReport = currentMonthReport,
             statusMessage = message,
             googleAccountEmail = cloudAuth.email,
             googleAccountName = cloudAuth.displayName,
@@ -1442,6 +1580,12 @@ class PocketViewModel(
         _selectedMonth.value = cal.get(Calendar.MONTH)
     }
 
+    fun resetToCurrentMonth() {
+        val cal = Calendar.getInstance()
+        _selectedYear.value = cal.get(Calendar.YEAR)
+        _selectedMonth.value = cal.get(Calendar.MONTH)
+    }
+
     // --- Onboarding & Sample Data ---
     fun completeOnboarding(
         currencyCode: String,
@@ -1522,40 +1666,86 @@ class PocketViewModel(
     }
 
     // --- Wallet Actions ---
-    fun saveWallet(wallet: WalletEntity, onSaved: (() -> Unit)? = null) {
+    fun saveWallet(
+        wallet: WalletEntity,
+        investmentSourcePerson: String = "",
+        investmentAmount: Double = 0.0,
+        onSaved: (() -> Unit)? = null
+    ) {
         val s = uiState.value.settings
-        if (wallet.id == 0L) {
+        if (wallet.id == 0L && !wallet.isFundWallet) {
             val isStarter = SubscriptionManager.isStarterWalletName(wallet.name)
+            val activeNonFundWallets = uiState.value.wallets.filter { !it.isArchived && !it.isFundWallet }
             if (!isStarter) {
-                val customCount = SubscriptionManager.countCustomWallets(uiState.value.wallets)
+                val customCount = SubscriptionManager.countCustomWallets(activeNonFundWallets)
                 if (!SubscriptionManager.canAddCustomWallet(customCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                    showUpgradeDialog("Free tier allows up to 3 default wallets and no custom wallets. Upgrade to Pocket Premium for unlimited custom wallets.")
+                    showUpgradeDialog("Free tier allows up to 3 default wallets and 1 custom wallet. Upgrade to Pocket Premium for unlimited custom wallets.")
                     return
                 }
             } else {
-                val totalCount = uiState.value.wallets.size
-                if (!SubscriptionManager.canAddDefaultWallet(totalCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                    showUpgradeDialog("Free tier allows choosing up to 3 default wallets. Upgrade to Pocket Premium for unlimited wallets.")
+                val defaultCount = activeNonFundWallets.count { SubscriptionManager.isStarterWalletName(it.name) }
+                if (!SubscriptionManager.canAddDefaultWallet(defaultCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
+                    showUpgradeDialog("Free tier allows up to 3 default wallets and 1 custom wallet. Upgrade to Pocket Premium for unlimited wallets.")
                     return
                 }
             }
-        } else {
+        } else if (wallet.id != 0L && !wallet.isFundWallet) {
             val existing = uiState.value.wallets.firstOrNull { it.id == wallet.id }
             val wasStarter = existing != null && SubscriptionManager.isStarterWalletName(existing.name)
             val isNowStarter = SubscriptionManager.isStarterWalletName(wallet.name)
             if (wasStarter && !isNowStarter) {
-                val customCount = SubscriptionManager.countCustomWallets(uiState.value.wallets.filter { it.id != wallet.id })
+                val customCount = SubscriptionManager.countCustomWallets(
+                    uiState.value.wallets.filter { !it.isArchived && !it.isFundWallet && it.id != wallet.id }
+                )
                 if (!SubscriptionManager.canAddCustomWallet(customCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                    showUpgradeDialog("Free tier allows up to 3 default wallets and no custom wallet names. Upgrade to Pocket Premium for custom wallet names.")
+                    showUpgradeDialog("Free tier allows up to 3 default wallets and 1 custom wallet name. Upgrade to Pocket Premium for unlimited custom wallet names.")
                     return
                 }
             }
         }
         viewModelScope.launch {
-            repository.saveWallet(wallet)
-            _statusMessage.value = "Wallet '${wallet.name}' saved."
+            val hasInvestmentLoan = wallet.id == 0L && investmentSourcePerson.isNotBlank() && investmentAmount > 0.0
+            val walletToSave = if (hasInvestmentLoan) {
+                wallet.copy(openingBalance = 0.0)
+            } else {
+                wallet
+            }
+            val savedWalletId = repository.saveWallet(walletToSave)
+            if (hasInvestmentLoan && savedWalletId > 0L) {
+                repository.createLoan(
+                    LoanEntity(
+                        personName = investmentSourcePerson.trim(),
+                        direction = LoanDirection.BORROWED.name,
+                        principalAmount = AccountingEngine.roundCurrency(investmentAmount),
+                        initialWalletId = savedWalletId,
+                        startDate = wallet.openingDate,
+                        note = "Initial investment / capital for ${wallet.name}"
+                    )
+                )
+                _statusMessage.value = "Investment fund '${wallet.name}' & capital from ${investmentSourcePerson.trim()} saved."
+            } else {
+                _statusMessage.value = "Wallet '${wallet.name}' saved."
+            }
             notifyWidgetsChanged()
             onSaved?.invoke()
+        }
+    }
+
+    fun toggleWalletVirtualFund(
+        walletId: Long,
+        enabled: Boolean,
+        openingFundAmount: Double = 0.0
+    ) {
+        val existing = uiState.value.wallets.firstOrNull { it.id == walletId } ?: return
+        viewModelScope.launch {
+            val updated = existing.withVirtualFund(enabled = enabled, openingFund = openingFundAmount)
+            repository.saveWallet(updated)
+            _statusMessage.value = if (enabled) {
+                "Virtual Fund enabled for '${existing.name}'."
+            } else {
+                "Virtual Fund disabled for '${existing.name}'."
+            }
+            notifyWidgetsChanged()
         }
     }
 
@@ -1687,7 +1877,7 @@ class PocketViewModel(
         if (recurringSetup != null) {
             val recCount = uiState.value.recurringTransactions.size
             if (!SubscriptionManager.canAddRecurringBill(recCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                showUpgradeDialog("Free tier allows up to 2 recurring bills / subscriptions. Upgrade to Pocket Premium for unlimited recurring schedules.")
+                showUpgradeDialog("Free tier allows up to 3 recurring bills / subscriptions. Upgrade to Pocket Premium for unlimited recurring schedules.")
                 return
             }
         }
@@ -1696,9 +1886,17 @@ class PocketViewModel(
                 transaction = transaction,
                 serviceFeeAmount = serviceFeeAmount
             )
+
+            val wName = uiState.value.wallets.firstOrNull { it.id == transaction.walletId }?.name ?: "Wallet"
             if (recurringSetup != null) {
                 repository.saveRecurringTransaction(recurringSetup)
                 _statusMessage.value = "Transaction saved & recurring schedule created."
+            } else if (transaction.tags.contains("FUND_BORROW", ignoreCase = true)) {
+                _statusMessage.value = "Personal borrow recorded from Fund via '$wName'."
+            } else if (transaction.tags.contains("FUND_EXPENSE", ignoreCase = true)) {
+                _statusMessage.value = "Official Fund expense recorded via '$wName'."
+            } else if (transaction.tags.contains("FUND_IN", ignoreCase = true)) {
+                _statusMessage.value = "Added to Fund via '$wName'."
             } else {
                 _statusMessage.value = "Transaction saved."
             }
@@ -1776,7 +1974,7 @@ class PocketViewModel(
         if (item.id == 0L) {
             val count = uiState.value.recurringTransactions.size
             if (!SubscriptionManager.canAddRecurringBill(count, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                showUpgradeDialog("Free tier allows up to 2 recurring bills / subscriptions. Upgrade to Pocket Premium for unlimited recurring schedules.")
+                showUpgradeDialog("Free tier allows up to 3 recurring bills / subscriptions. Upgrade to Pocket Premium for unlimited recurring schedules.")
                 return
             }
         }
@@ -1944,7 +2142,7 @@ class PocketViewModel(
         if (goal.id == 0L) {
             val count = uiState.value.savingsGoals.size
             if (!SubscriptionManager.canAddSavingsGoal(count, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                showUpgradeDialog("Free tier allows up to 2 savings targets. Upgrade to Pocket Premium for unlimited savings targets.")
+                showUpgradeDialog("Free tier allows up to 3 savings targets. Upgrade to Pocket Premium for unlimited savings goals.")
                 return
             }
         }
@@ -2032,8 +2230,30 @@ class PocketViewModel(
         navigateBackOnSave: Boolean = true
     ) {
         viewModelScope.launch {
+            val isFundTransfer = transfer.note.contains("[FUND_TRANSFER]", ignoreCase = true)
+            val isFundBorrow = transfer.note.contains("[FUND_BORROW]", ignoreCase = true)
+            val isFundReturn = transfer.note.contains("[FUND_RETURN]", ignoreCase = true)
+
+            if (isFundTransfer || isFundBorrow) {
+                val srcWallet = uiState.value.wallets.firstOrNull { it.id == transfer.sourceWalletId }
+                if (srcWallet != null && !srcWallet.hasVirtualFund) {
+                    repository.saveWallet(srcWallet.withVirtualFund(enabled = true, openingFund = srcWallet.openingFundBalance))
+                }
+            }
+            if (isFundTransfer || isFundReturn) {
+                val dstWallet = uiState.value.wallets.firstOrNull { it.id == transfer.destinationWalletId }
+                if (dstWallet != null && !dstWallet.hasVirtualFund) {
+                    repository.saveWallet(dstWallet.withVirtualFund(enabled = true, openingFund = dstWallet.openingFundBalance))
+                }
+            }
+
             repository.saveTransfer(transfer, sourceWalletName, destWalletName)
-            _statusMessage.value = "Transfer recorded."
+            _statusMessage.value = when {
+                isFundTransfer -> "Transferred Fund from '$sourceWalletName' to '$destWalletName'."
+                isFundReturn -> "Returned borrowed money to '$destWalletName' Fund."
+                isFundBorrow -> "Personal borrow transferred from '$sourceWalletName' Fund."
+                else -> "Transfer recorded."
+            }
             notifyWidgetsChanged()
             if (navigateBackOnSave) {
                 navigateBack()
@@ -2046,7 +2266,7 @@ class PocketViewModel(
         val s = uiState.value.settings
         val distinctPersons = uiState.value.loans.map { it.personName }.toSet()
         if (!SubscriptionManager.canAddLoanPerson(distinctPersons, loan.personName, s.subscriptionTier, s.subscriptionExpiresAt)) {
-            showUpgradeDialog("Free tier allows up to 2 loan contacts in Khata. Upgrade to Pocket Premium to manage unlimited people.")
+            showUpgradeDialog("Free tier allows up to 3 loan contacts in Khata. Upgrade to Pocket Premium to manage unlimited people.")
             return
         }
         viewModelScope.launch {
@@ -2171,6 +2391,19 @@ class PocketViewModel(
         viewModelScope.launch {
             repository.updateSettings(current.copy(appLanguage = normalized))
             _statusMessage.value = if (normalized == "BN") "ভাষা বাংলায় পরিবর্তন করা হয়েছে।" else "Language switched to English."
+            notifyWidgetsChanged()
+        }
+    }
+
+    fun setFundFeatureEnabled(enabled: Boolean) {
+        val current = uiState.value.settings
+        if (enabled && !SubscriptionManager.canUseFundFeature(current.subscriptionTier, current.subscriptionExpiresAt)) {
+            showUpgradeDialog("The Fund feature is a Pocket Premium feature. Upgrade to manage official/project funds and personal borrows separately.")
+            return
+        }
+        viewModelScope.launch {
+            repository.updateSettings(current.copy(fundFeatureEnabled = enabled))
+            _statusMessage.value = if (enabled) "Fund feature enabled." else "Fund feature disabled."
             notifyWidgetsChanged()
         }
     }
@@ -2335,7 +2568,8 @@ class PocketViewModel(
                         appLanguage = preservedLang,
                         subscriptionTier = if (keepLocalSub) currentSettings.subscriptionTier else payload.settings.subscriptionTier,
                         subscriptionExpiresAt = if (keepLocalSub) currentSettings.subscriptionExpiresAt else payload.settings.subscriptionExpiresAt,
-                        activationCode = if (keepLocalSub) currentSettings.activationCode else payload.settings.activationCode
+                        activationCode = if (keepLocalSub) currentSettings.activationCode else payload.settings.activationCode,
+                        fundFeatureEnabled = payload.settings.fundFeatureEnabled || currentSettings.fundFeatureEnabled
                     )
                 )
             )

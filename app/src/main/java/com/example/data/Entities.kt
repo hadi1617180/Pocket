@@ -12,6 +12,7 @@ enum class WalletType(val label: String, val subtitle: String) {
     BANK("Bank", "Savings / current"),
     TRANSIT("Transit Card", "Transit balance"),
     SAVINGS("Savings", "Dedicated savings"),
+    FUND("Fund", "Investment / project fund"),
     CARD("Card", "Debit / credit card"),
     CUSTOM("Custom", "Custom wallet")
 }
@@ -40,6 +41,9 @@ enum class LoanActivityType(val label: String) {
     ADJUSTMENT("Principal Adjustment")
 }
 
+const val VIRTUAL_FUND_WALLET_ID = -999L
+private val VFUND_HINT_REGEX = Regex("""\[VFUND:(1|0):(-?[0-9]+(?:\.[0-9]+)?)]""", RegexOption.IGNORE_CASE)
+
 @JsonClass(generateAdapter = true)
 @Entity(tableName = "wallets")
 data class WalletEntity(
@@ -58,7 +62,50 @@ data class WalletEntity(
     val creditLimit: Double = 0.0,
     val statementDay: Int = 0,
     val paymentDueDay: Int = 0
-)
+) {
+    @get:androidx.room.Ignore
+    val isFundWallet: Boolean
+        get() = type.equals(WalletType.FUND.name, ignoreCase = true) ||
+            name.trim().equals("Fund", ignoreCase = true)
+
+    @get:androidx.room.Ignore
+    val hasVirtualFund: Boolean
+        get() {
+            if (isFundWallet) return true
+            val match = VFUND_HINT_REGEX.find(accountHint)
+            if (match != null) return match.groupValues[1] == "1"
+            return false
+        }
+
+    @get:androidx.room.Ignore
+    val openingFundBalance: Double
+        get() {
+            if (isFundWallet) {
+                return openingBalance.coerceAtLeast(0.0)
+            }
+            val match = VFUND_HINT_REGEX.find(accountHint)
+            if (match != null) {
+                return if (match.groupValues[1] == "1") {
+                    match.groupValues[2].toDoubleOrNull() ?: 0.0
+                } else {
+                    0.0
+                }
+            }
+            return 0.0
+        }
+
+    @get:androidx.room.Ignore
+    val cleanAccountHint: String
+        get() = accountHint.replace(VFUND_HINT_REGEX, "").trim()
+
+    fun withVirtualFund(enabled: Boolean, openingFund: Double = 0.0): WalletEntity {
+        val clean = cleanAccountHint
+        val roundedFund = kotlin.math.round(openingFund.coerceAtLeast(0.0) * 100.0) / 100.0
+        val token = if (enabled) "[VFUND:1:$roundedFund]" else "[VFUND:0:0.0]"
+        val combinedHint = if (clean.isBlank()) token else "$clean $token"
+        return copy(accountHint = combinedHint)
+    }
+}
 
 @JsonClass(generateAdapter = true)
 @Entity(tableName = "categories")
@@ -172,7 +219,7 @@ data class LoanEntity(
     val personName: String,
     val direction: String, // LENT or BORROWED
     val principalAmount: Double,
-    val initialWalletId: Long,
+    val initialWalletId: Long? = null,
     val startDate: Long,
     val dueDate: Long? = null,
     val interestRate: Double = 0.0,
@@ -208,7 +255,7 @@ data class LoanActivityEntity(
     val activityType: String, // DISBURSEMENT, REPAYMENT, ADJUSTMENT
     val principalPortion: Double,
     val interestPortion: Double = 0.0,
-    val walletId: Long,
+    val walletId: Long? = null,
     val date: Long,
     val note: String = ""
 )
@@ -254,7 +301,7 @@ data class AppSettingsEntity(
     val appLockPin: String = "",
     val biometricUnlockEnabled: Boolean = false,
     val customBackgroundUri: String = "",
-    val backgroundOpacity: Float = 0.85f,
+    val backgroundOpacity: Float = 0.20f,
     val loanDeadlineNotificationEnabled: Boolean = true,
     val dailyExpenseReminderEnabled: Boolean = true,
     val dailyReminderHour: Int = 20,
@@ -267,8 +314,9 @@ data class AppSettingsEntity(
     val subscriptionExpiresAt: Long? = null,
     val activationCode: String = "",
     val appLanguage: String = "EN", // EN, BN
-    val boxColorHex: String = "",
-    val boxOpacity: Float = 0.50f
+    val boxColorHex: String = "#2A2A2A",
+    val boxOpacity: Float = 0.50f,
+    val fundFeatureEnabled: Boolean = false
 )
 
 enum class SubscriptionTier(val label: String) {

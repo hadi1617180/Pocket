@@ -205,26 +205,27 @@ class ExampleUnitTest {
         assertTrue(SubscriptionManager.canAddTransactionToday(10, SubscriptionTier.TRIAL_3_DAYS.name, trialExp, now))
         assertTrue(SubscriptionManager.canAddTransactionToday(10, SubscriptionTier.LIFETIME.name, null, now))
 
-        // Wallets: up to 3 default starter wallets and 0 custom wallets on Free
+        // Wallets: up to 3 default starter wallets and 1 custom wallet on Free
         assertTrue(SubscriptionManager.canAddDefaultWallet(2, SubscriptionTier.FREE.name, null, now))
         assertFalse(SubscriptionManager.canAddDefaultWallet(3, SubscriptionTier.FREE.name, null, now))
         assertTrue(SubscriptionManager.canAddDefaultWallet(3, SubscriptionTier.LIFETIME.name, null, now))
-        assertFalse(SubscriptionManager.canAddCustomWallet(0, SubscriptionTier.FREE.name, null, now))
-        assertTrue(SubscriptionManager.canAddCustomWallet(0, SubscriptionTier.LIFETIME.name, null, now))
+        assertTrue(SubscriptionManager.canAddCustomWallet(0, SubscriptionTier.FREE.name, null, now))
+        assertFalse(SubscriptionManager.canAddCustomWallet(1, SubscriptionTier.FREE.name, null, now))
+        assertTrue(SubscriptionManager.canAddCustomWallet(1, SubscriptionTier.LIFETIME.name, null, now))
 
-        // Savings goals & Recurring bills: max 2 each on Free
-        assertTrue(SubscriptionManager.canAddSavingsGoal(1, SubscriptionTier.FREE.name, null, now))
-        assertFalse(SubscriptionManager.canAddSavingsGoal(2, SubscriptionTier.FREE.name, null, now))
-        assertTrue(SubscriptionManager.canAddSavingsGoal(2, SubscriptionTier.TRIAL_3_DAYS.name, trialExp, now))
-        assertTrue(SubscriptionManager.canAddRecurringBill(1, SubscriptionTier.FREE.name, null, now))
-        assertFalse(SubscriptionManager.canAddRecurringBill(2, SubscriptionTier.FREE.name, null, now))
-        assertTrue(SubscriptionManager.canAddRecurringBill(2, SubscriptionTier.LIFETIME.name, null, now))
+        // Savings goals & Recurring bills: max 3 each on Free
+        assertTrue(SubscriptionManager.canAddSavingsGoal(2, SubscriptionTier.FREE.name, null, now))
+        assertFalse(SubscriptionManager.canAddSavingsGoal(3, SubscriptionTier.FREE.name, null, now))
+        assertTrue(SubscriptionManager.canAddSavingsGoal(3, SubscriptionTier.TRIAL_3_DAYS.name, trialExp, now))
+        assertTrue(SubscriptionManager.canAddRecurringBill(2, SubscriptionTier.FREE.name, null, now))
+        assertFalse(SubscriptionManager.canAddRecurringBill(3, SubscriptionTier.FREE.name, null, now))
+        assertTrue(SubscriptionManager.canAddRecurringBill(3, SubscriptionTier.LIFETIME.name, null, now))
 
-        // Loan persons: max 2 unique people on Free
-        val twoPeople = setOf("Rahim", "Karim")
-        assertTrue(SubscriptionManager.canAddLoanPerson(twoPeople, "Rahim", SubscriptionTier.FREE.name, null, now))
-        assertFalse(SubscriptionManager.canAddLoanPerson(twoPeople, "Jamal", SubscriptionTier.FREE.name, null, now))
-        assertTrue(SubscriptionManager.canAddLoanPerson(twoPeople, "Jamal", SubscriptionTier.TRIAL_3_DAYS.name, trialExp, now))
+        // Loan persons: max 3 unique people on Free
+        val threePeople = setOf("Rahim", "Karim", "Salam")
+        assertTrue(SubscriptionManager.canAddLoanPerson(threePeople, "Rahim", SubscriptionTier.FREE.name, null, now))
+        assertFalse(SubscriptionManager.canAddLoanPerson(threePeople, "Jamal", SubscriptionTier.FREE.name, null, now))
+        assertTrue(SubscriptionManager.canAddLoanPerson(threePeople, "Jamal", SubscriptionTier.TRIAL_3_DAYS.name, trialExp, now))
 
         // Accent color (Orange #F15A24 and Teal #14B8A6 free) & App Lock (Local PIN free, Biometrics paid)
         assertTrue(SubscriptionManager.isAccentColorAllowed("#F15A24", SubscriptionTier.FREE.name, null, now))
@@ -234,6 +235,283 @@ class ExampleUnitTest {
         assertTrue(SubscriptionManager.canUseAppLock(SubscriptionTier.FREE.name, null, now))
         assertFalse(SubscriptionManager.canUseBiometricLock(SubscriptionTier.FREE.name, null, now))
         assertTrue(SubscriptionManager.canUseBiometricLock(SubscriptionTier.LIFETIME.name, null, now))
+    }
+
+    @Test
+    fun `fund wallet tracks personal borrow from expenses and transfers and recovers via return to fund`() {
+        val now = 1_700_000_000_000L
+        val officeFund = WalletEntity(id = 10, name = "Office Fund", type = WalletType.FUND.name, openingBalance = 400000.0)
+        val bank = WalletEntity(id = 11, name = "Bank", type = WalletType.BANK.name, openingBalance = 50000.0)
+
+        val officialExpense = TransactionEntity(
+            id = 1,
+            type = TransactionType.EXPENSE.name,
+            amount = 20000.0,
+            date = now,
+            walletId = 10,
+            categoryId = 1,
+            note = "Office setup"
+        )
+        val personalBorrowExpense = TransactionEntity(
+            id = 2,
+            type = TransactionType.EXPENSE.name,
+            amount = 30000.0,
+            date = now + 1000L,
+            walletId = 10,
+            categoryId = 1,
+            note = "Personal shopping",
+            tags = "FUND_BORROW"
+        )
+        val returnTransfer = TransferEntity(
+            id = 1,
+            sourceWalletId = 11,
+            destinationWalletId = 10,
+            principalAmount = 10000.0,
+            date = now + 2000L,
+            note = "[FUND_RETURN] Returned personal borrow to Office Fund"
+        )
+
+        val summaryBeforeReturn = AccountingEngine.calculateWalletSummary(
+            wallet = officeFund,
+            transactions = listOf(officialExpense, personalBorrowExpense),
+            transfers = emptyList(),
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+        assertEquals(350000.0, summaryBeforeReturn.currentBalance, 0.001)
+        assertEquals(30000.0, summaryBeforeReturn.fundBorrowedDue, 0.001)
+
+        val summaryAfterPartialReturn = AccountingEngine.calculateWalletSummary(
+            wallet = officeFund,
+            transactions = listOf(officialExpense, personalBorrowExpense),
+            transfers = listOf(returnTransfer),
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+        assertEquals(360000.0, summaryAfterPartialReturn.currentBalance, 0.001)
+        assertEquals(20000.0, summaryAfterPartialReturn.fundBorrowedDue, 0.001)
+        assertEquals(30000.0, summaryAfterPartialReturn.fundBorrowedTotal, 0.001)
+        assertEquals(10000.0, summaryAfterPartialReturn.fundReturnedTotal, 0.001)
+        assertNotNull(bank)
+    }
+
+    @Test
+    fun `per-wallet virtual fund accurately tracks 4 lakh cash investment, 50k bank fund transfer, 20k office expense, and 30k personal borrow`() {
+        val now = 1_700_000_000_000L
+
+        // User starts with Cash wallet (with Virtual Fund enabled, opening 0) and Bank wallet (with Virtual Fund enabled, opening 0)
+        val cashWallet = WalletEntity(id = 1, name = "Cash", type = WalletType.CASH.name, openingBalance = 0.0)
+            .withVirtualFund(enabled = true, openingFund = 0.0)
+        val bankWallet = WalletEntity(id = 2, name = "Bank", type = WalletType.BANK.name, openingBalance = 0.0)
+            .withVirtualFund(enabled = true, openingFund = 0.0)
+
+        // 1. Receive 4,00,000 Tk Investment in Cash as Add to Fund (FUND_IN)
+        val investmentIncome = TransactionEntity(
+            id = 10,
+            type = TransactionType.INCOME.name,
+            amount = 400000.0,
+            date = now,
+            walletId = 1,
+            categoryId = 1,
+            note = "Investment capital in Cash",
+            tags = "FUND_IN"
+        )
+
+        // 2. Deposit 50,000 Tk from Cash to Bank as a Fund Transfer ([FUND_TRANSFER])
+        val depositToBank = TransferEntity(
+            id = 20,
+            sourceWalletId = 1,
+            destinationWalletId = 2,
+            principalAmount = 50000.0,
+            date = now + 1000L,
+            note = "[FUND_TRANSFER] Deposited 50k of fund into Bank"
+        )
+
+        // 3. Spend 20,000 Tk from Cash on official office work (FUND_EXPENSE)
+        val officeExpense = TransactionEntity(
+            id = 30,
+            type = TransactionType.EXPENSE.name,
+            amount = 20000.0,
+            date = now + 2000L,
+            walletId = 1,
+            categoryId = 1,
+            note = "Office work expense",
+            tags = "FUND_EXPENSE"
+        )
+
+        // 4. Spend 30,000 Tk from Cash for personal use to be returned later (FUND_BORROW)
+        val personalBorrow = TransactionEntity(
+            id = 40,
+            type = TransactionType.EXPENSE.name,
+            amount = 30000.0,
+            date = now + 3000L,
+            walletId = 1,
+            categoryId = 1,
+            note = "Personal use (borrow from fund)",
+            tags = "FUND_BORROW"
+        )
+
+        val txs = listOf(investmentIncome, officeExpense, personalBorrow)
+        val transfers = listOf(depositToBank)
+
+        val cashSummary = AccountingEngine.calculateWalletSummary(
+            wallet = cashWallet,
+            transactions = txs,
+            transfers = transfers,
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+        val bankSummary = AccountingEngine.calculateWalletSummary(
+            wallet = bankWallet,
+            transactions = txs,
+            transfers = transfers,
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+
+        // Verify Cash: Physical = 3,00,000, Fund = 3,00,000, Official Spent = 20,000, Borrowed Due = 30,000
+        assertEquals(300000.0, cashSummary.currentBalance, 0.001)
+        assertEquals(300000.0, cashSummary.fundBalance, 0.001)
+        assertEquals(0.0, cashSummary.personalBalance, 0.001)
+        assertEquals(20000.0, cashSummary.fundOfficialSpent, 0.001)
+        assertEquals(30000.0, cashSummary.fundBorrowedDue, 0.001)
+
+        // Verify Bank: Physical = 50,000, Fund = 50,000
+        assertEquals(50000.0, bankSummary.currentBalance, 0.001)
+        assertEquals(50000.0, bankSummary.fundBalance, 0.001)
+        assertEquals(0.0, bankSummary.personalBalance, 0.001)
+
+        // Verify Combined Auto-Summed Fund: 3,00,000 + 50,000 = 3,50,000 (equals Total Physical Balance without double-counting!)
+        val combinedFundBalance = cashSummary.fundBalance + bankSummary.fundBalance
+        val totalPhysicalBalance = cashSummary.currentBalance + bankSummary.currentBalance
+        assertEquals(350000.0, combinedFundBalance, 0.001)
+        assertEquals(350000.0, totalPhysicalBalance, 0.001)
+
+        // 5. Now user receives 40,000 Tk personal salary into Bank, and returns the 30,000 Tk borrowed due from Bank into Cash Fund
+        val personalSalaryInBank = TransactionEntity(
+            id = 50,
+            type = TransactionType.INCOME.name,
+            amount = 40000.0,
+            date = now + 4000L,
+            walletId = 2,
+            categoryId = 1,
+            note = "Personal Salary"
+        )
+        val returnFromBankToCashFund = TransferEntity(
+            id = 60,
+            sourceWalletId = 2,
+            destinationWalletId = 1,
+            principalAmount = 30000.0,
+            date = now + 5000L,
+            note = "[FUND_RETURN] Returned 30k personal borrow to Cash Fund"
+        )
+
+        val txsAfterReturn = txs + personalSalaryInBank
+        val transfersAfterReturn = transfers + returnFromBankToCashFund
+
+        val cashAfterReturn = AccountingEngine.calculateWalletSummary(
+            wallet = cashWallet,
+            transactions = txsAfterReturn,
+            transfers = transfersAfterReturn,
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+        val bankAfterReturn = AccountingEngine.calculateWalletSummary(
+            wallet = bankWallet,
+            transactions = txsAfterReturn,
+            transfers = transfersAfterReturn,
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+
+        // Cash Fund is now 3,30,000, Borrowed Due is 0!
+        assertEquals(330000.0, cashAfterReturn.currentBalance, 0.001)
+        assertEquals(330000.0, cashAfterReturn.fundBalance, 0.001)
+        assertEquals(0.0, cashAfterReturn.fundBorrowedDue, 0.001)
+
+        // Bank physical is 50,000 + 40,000 - 30,000 = 60,000 (Fund: 50,000, Personal: 10,000)
+        assertEquals(60000.0, bankAfterReturn.currentBalance, 0.001)
+        assertEquals(50000.0, bankAfterReturn.fundBalance, 0.001)
+        assertEquals(10000.0, bankAfterReturn.personalBalance, 0.001)
+
+        // Combined Fund is now 3,30,000 + 50,000 = 3,80,000 (4,00,000 capital - 20,000 official expense)!
+        assertEquals(380000.0, cashAfterReturn.fundBalance + bankAfterReturn.fundBalance, 0.001)
+    }
+
+    @Test
+    fun `solution 2 dedicated Fund wallet keeps pocket Cash separate and tracks Bank fund transfers without double counting`() {
+        val now = 1_700_000_000_000L
+
+        // Pocket Cash has 2,000 Tk, Bank has 10,000 Tk personal, and dedicated Fund wallet has 4,00,000 Tk cash fund
+        val pocketCash = WalletEntity(id = 1, name = "Cash", type = WalletType.CASH.name, openingBalance = 2000.0)
+        val bankWallet = WalletEntity(id = 2, name = "Bank", type = WalletType.BANK.name, openingBalance = 10000.0)
+        val fundWallet = WalletEntity(id = 3, name = "Fund", type = WalletType.FUND.name, openingBalance = 400000.0)
+
+        // 1. Transfer 50,000 Tk from Fund (Cash) to Bank (Keep as Fund)
+        val transferToBank = TransferEntity(
+            id = 10,
+            sourceWalletId = 3,
+            destinationWalletId = 2,
+            principalAmount = 50000.0,
+            date = now + 1000L,
+            note = "[FUND_TRANSFER] Fund transfer from Fund to Bank"
+        )
+
+        // 2. Spend 20,000 Tk for office work from Bank (FUND_EXPENSE) and 30,000 Tk Personal Borrow from Fund
+        val officeFromBank = TransactionEntity(
+            id = 20,
+            type = TransactionType.EXPENSE.name,
+            amount = 20000.0,
+            date = now + 2000L,
+            walletId = 2,
+            categoryId = 1,
+            note = "Office equipment from Bank",
+            tags = "FUND_EXPENSE"
+        )
+        val borrowFromFund = TransactionEntity(
+            id = 21,
+            type = TransactionType.EXPENSE.name,
+            amount = 30000.0,
+            date = now + 3000L,
+            walletId = 3,
+            categoryId = 1,
+            note = "Personal borrow from Fund",
+            tags = "FUND_BORROW"
+        )
+
+        val txs = listOf(officeFromBank, borrowFromFund)
+        val transfers = listOf(transferToBank)
+
+        val cashSum = AccountingEngine.calculateWalletSummary(pocketCash, txs, transfers, emptyList(), emptyList(), emptyList())
+        val bankSum = AccountingEngine.calculateWalletSummary(bankWallet, txs, transfers, emptyList(), emptyList(), emptyList())
+        val fundSum = AccountingEngine.calculateWalletSummary(fundWallet, txs, transfers, emptyList(), emptyList(), emptyList())
+
+        // Pocket Cash is untouched at 2,000 Tk!
+        assertEquals(2000.0, cashSum.currentBalance, 0.001)
+        assertFalse(cashSum.hasVirtualFund)
+
+        // Bank has 10,000 personal + 50,000 fund in - 20,000 fund expense = 40,000 total (30,000 Fund + 10,000 Personal)
+        assertEquals(40000.0, bankSum.currentBalance, 0.001)
+        assertEquals(30000.0, bankSum.fundBalance, 0.001)
+        assertEquals(10000.0, bankSum.personalBalance, 0.001)
+
+        // Fund (Cash) has 4,00,000 - 50,000 (to Bank) - 30,000 (borrow) = 3,20,000 Cash in Fund
+        assertEquals(320000.0, fundSum.currentBalance, 0.001)
+        assertEquals(320000.0, fundSum.fundBalance, 0.001)
+
+        // Total Fund Remaining across Fund (3,20,000) + Bank (30,000) = 3,50,000!
+        val totalFundRemaining = fundSum.fundBalance + bankSum.fundBalance
+        assertEquals(350000.0, totalFundRemaining, 0.001)
+
+        // Total Available Balance across all wallets = 2,000 (Cash) + 40,000 (Bank) + 3,20,000 (Fund) = 3,62,000 (zero double counting!)
+        val totalAvailableBalance = cashSum.currentBalance + bankSum.currentBalance + fundSum.currentBalance
+        assertEquals(362000.0, totalAvailableBalance, 0.001)
     }
 }
 

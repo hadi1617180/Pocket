@@ -187,7 +187,7 @@ object BackupManager {
         }
 
         payload.loans.forEach { loan ->
-            if (loan.initialWalletId !in walletIds) {
+            if (loan.initialWalletId != null && loan.initialWalletId > 0L && loan.initialWalletId !in walletIds) {
                 return BackupValidationResult(
                     false,
                     "Referential integrity error: Loan #${loan.id} references missing wallet #${loan.initialWalletId}."
@@ -202,7 +202,7 @@ object BackupManager {
                     "Referential integrity error: Loan activity #${act.id} references missing loan #${act.loanId}."
                 )
             }
-            if (act.walletId !in walletIds) {
+            if (act.walletId != null && act.walletId > 0L && act.walletId !in walletIds) {
                 return BackupValidationResult(
                     false,
                     "Referential integrity error: Loan activity #${act.id} references missing wallet #${act.walletId}."

@@ -22,7 +22,18 @@ data class WalletBalanceSummary(
     val loanPrincipalIn: Double,
     val loanPrincipalOut: Double,
     val adjustmentsNet: Double,
-    val currentBalance: Double
+    val currentBalance: Double,
+    val hasVirtualFund: Boolean = false,
+    val openingFundBalance: Double = 0.0,
+    val fundIncomeIn: Double = 0.0,
+    val fundTransferIn: Double = 0.0,
+    val fundTransferOut: Double = 0.0,
+    val fundOfficialSpent: Double = 0.0,
+    val fundBalance: Double = 0.0,
+    val personalBalance: Double = 0.0,
+    val fundBorrowedDue: Double = 0.0,
+    val fundBorrowedTotal: Double = 0.0,
+    val fundReturnedTotal: Double = 0.0
 ) {
     val totalMoneyIn: Double
         get() = totalIncome + expenseReversals + transferIn + loanPrincipalIn
@@ -260,26 +271,63 @@ object AccountingEngine {
         loans: List<LoanEntity>,
         loanActivities: List<LoanActivityEntity>,
         adjustments: List<BalanceAdjustmentEntity>,
-        upToTimestamp: Long = Long.MAX_VALUE
+        upToTimestamp: Long = Long.MAX_VALUE,
+        fundFeatureEnabled: Boolean = true
     ): WalletBalanceSummary {
         val loanMap = loans.associateBy { it.id }
+
+        val isFundWallet = wallet.isFundWallet
+        val openingFund = when {
+            isFundWallet -> wallet.openingBalance.coerceAtLeast(0.0)
+            wallet.hasVirtualFund -> wallet.openingFundBalance
+            else -> 0.0
+        }
 
         var income = 0.0
         var grossExpense = 0.0
         var expenseReversal = 0.0
         var transferFees = 0.0
+        var fundIncomeIn = 0.0
+        var fundOfficialSpent = 0.0
+        var fundBorrowedOut = 0.0
+        var fundReturnedIn = 0.0
+        var fundTransferIn = 0.0
+        var fundTransferOut = 0.0
 
         transactions.forEach { tx ->
             if (tx.walletId == wallet.id && tx.date <= upToTimestamp) {
                 when (tx.type) {
-                    TransactionType.INCOME.name -> income += tx.amount
+                    TransactionType.INCOME.name -> {
+                        income += tx.amount
+                        if (tx.tags.contains("FUND_IN", ignoreCase = true) ||
+                            (isFundWallet && !tx.tags.contains("PERSONAL", ignoreCase = true))
+                        ) {
+                            fundIncomeIn += tx.amount
+                        }
+                    }
                     TransactionType.EXPENSE.name -> {
                         grossExpense += tx.amount
                         if (tx.transferId != null) {
                             transferFees += tx.amount
                         }
+                        when {
+                            tx.tags.contains("FUND_BORROW", ignoreCase = true) -> {
+                                fundBorrowedOut += tx.amount
+                            }
+                            tx.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
+                                (isFundWallet && !tx.tags.contains("PERSONAL", ignoreCase = true)) -> {
+                                fundOfficialSpent += tx.amount
+                            }
+                        }
                     }
-                    TransactionType.EXPENSE_REVERSAL.name -> expenseReversal += tx.amount
+                    TransactionType.EXPENSE_REVERSAL.name -> {
+                        expenseReversal += tx.amount
+                        if (tx.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
+                            (isFundWallet && !tx.tags.contains("PERSONAL", ignoreCase = true))
+                        ) {
+                            fundOfficialSpent = max(0.0, fundOfficialSpent - tx.amount)
+                        }
+                    }
                 }
             }
         }
@@ -288,11 +336,32 @@ object AccountingEngine {
         var transferOut = 0.0
         transfers.forEach { tr ->
             if (tr.date <= upToTimestamp) {
-                if (tr.destinationWalletId == wallet.id) {
-                    transferIn += if (tr.destinationAmount > 0.0) tr.destinationAmount else tr.principalAmount
-                }
-                if (tr.sourceWalletId == wallet.id) {
-                    transferOut += tr.principalAmount
+                val isSameWalletInternal = tr.sourceWalletId == tr.destinationWalletId
+                if (isSameWalletInternal) {
+                    if (tr.sourceWalletId == wallet.id) {
+                        val credited = if (tr.destinationAmount > 0.0) tr.destinationAmount else tr.principalAmount
+                        if (tr.note.contains("[FUND_RETURN]", ignoreCase = true)) {
+                            fundReturnedIn += credited
+                        } else if (tr.note.contains("[FUND_BORROW]", ignoreCase = true)) {
+                            fundBorrowedOut += tr.principalAmount
+                        }
+                    }
+                } else {
+                    if (tr.destinationWalletId == wallet.id) {
+                        val credited = if (tr.destinationAmount > 0.0) tr.destinationAmount else tr.principalAmount
+                        transferIn += credited
+                        when {
+                            tr.note.contains("[FUND_RETURN]", ignoreCase = true) -> fundReturnedIn += credited
+                            tr.note.contains("[FUND_TRANSFER]", ignoreCase = true) || isFundWallet -> fundTransferIn += credited
+                        }
+                    }
+                    if (tr.sourceWalletId == wallet.id) {
+                        transferOut += tr.principalAmount
+                        when {
+                            tr.note.contains("[FUND_BORROW]", ignoreCase = true) -> fundBorrowedOut += tr.principalAmount
+                            tr.note.contains("[FUND_TRANSFER]", ignoreCase = true) || isFundWallet -> fundTransferOut += tr.principalAmount
+                        }
+                    }
                 }
             }
         }
@@ -300,27 +369,29 @@ object AccountingEngine {
         var loanPrincipalIn = 0.0
         var loanPrincipalOut = 0.0
         loanActivities.forEach { act ->
-            if (act.walletId == wallet.id && act.date <= upToTimestamp) {
+            if (act.date <= upToTimestamp) {
                 val loan = loanMap[act.loanId]
                 if (loan != null) {
                     val isLent = loan.direction == LoanDirection.LENT.name
-                    when (act.activityType) {
-                        LoanActivityType.DISBURSEMENT.name, LoanActivityType.ADJUSTMENT.name -> {
-                            if (isLent) {
-                                // Lending money reduces wallet balance
-                                loanPrincipalOut += act.principalPortion
-                            } else {
-                                // Borrowing money increases wallet balance
-                                loanPrincipalIn += act.principalPortion
+                    if (act.walletId == wallet.id) {
+                        when (act.activityType) {
+                            LoanActivityType.DISBURSEMENT.name, LoanActivityType.ADJUSTMENT.name -> {
+                                if (isLent) {
+                                    // Lending money reduces wallet balance
+                                    loanPrincipalOut += act.principalPortion
+                                } else {
+                                    // Borrowing money increases wallet balance
+                                    loanPrincipalIn += act.principalPortion
+                                }
                             }
-                        }
-                        LoanActivityType.REPAYMENT.name -> {
-                            if (isLent) {
-                                // Receiving principal back increases wallet balance
-                                loanPrincipalIn += act.principalPortion
-                            } else {
-                                // Repaying borrowed principal reduces wallet balance
-                                loanPrincipalOut += act.principalPortion
+                            LoanActivityType.REPAYMENT.name -> {
+                                if (isLent) {
+                                    // Receiving principal back increases wallet balance
+                                    loanPrincipalIn += act.principalPortion
+                                } else {
+                                    // Repaying borrowed principal reduces wallet balance
+                                    loanPrincipalOut += act.principalPortion
+                                }
                             }
                         }
                     }
@@ -347,6 +418,29 @@ object AccountingEngine {
                 adjustmentsNet
         )
 
+        val effectiveHasVirtualFund = fundFeatureEnabled && (
+            isFundWallet ||
+                wallet.hasVirtualFund ||
+                openingFund > 0.005 ||
+                fundIncomeIn > 0.005 ||
+                fundTransferIn > 0.005 ||
+                fundTransferOut > 0.005 ||
+                fundOfficialSpent > 0.005 ||
+                fundBorrowedOut > 0.005 ||
+                fundReturnedIn > 0.005
+            )
+        val rawFundBalance = when {
+            !fundFeatureEnabled -> 0.0
+            isFundWallet -> closingBalance
+            effectiveHasVirtualFund -> {
+                openingFund + fundIncomeIn + fundTransferIn + fundReturnedIn - fundOfficialSpent - fundBorrowedOut - fundTransferOut
+            }
+            else -> 0.0
+        }
+        val cleanFundBalance = roundCurrency(rawFundBalance)
+        val cleanPersonalBalance = roundCurrency(closingBalance - cleanFundBalance)
+        val fundBorrowedDue = if (fundFeatureEnabled) roundCurrency(max(0.0, fundBorrowedOut - fundReturnedIn)) else 0.0
+
         return WalletBalanceSummary(
             wallet = wallet,
             openingBalance = roundCurrency(wallet.openingBalance),
@@ -360,7 +454,18 @@ object AccountingEngine {
             loanPrincipalIn = roundCurrency(loanPrincipalIn),
             loanPrincipalOut = roundCurrency(loanPrincipalOut),
             adjustmentsNet = roundCurrency(adjustmentsNet),
-            currentBalance = closingBalance
+            currentBalance = closingBalance,
+            hasVirtualFund = effectiveHasVirtualFund,
+            openingFundBalance = roundCurrency(openingFund),
+            fundIncomeIn = roundCurrency(fundIncomeIn),
+            fundTransferIn = roundCurrency(fundTransferIn),
+            fundTransferOut = roundCurrency(fundTransferOut),
+            fundOfficialSpent = roundCurrency(fundOfficialSpent),
+            fundBalance = cleanFundBalance,
+            personalBalance = cleanPersonalBalance,
+            fundBorrowedDue = fundBorrowedDue,
+            fundBorrowedTotal = roundCurrency(fundBorrowedOut),
+            fundReturnedTotal = roundCurrency(fundReturnedIn)
         )
     }
 
@@ -405,12 +510,17 @@ object AccountingEngine {
                 else -> "ACTIVE"
             }
 
-            val loanWalletCurr = walletMap[loan.initialWalletId]?.currency
-                ?: acts.firstOrNull()?.let { walletMap[it.walletId]?.currency }
+            val loanWalletCurr = (loan.initialWalletId?.let { walletMap[it]?.currency })
+                ?: acts.firstOrNull()?.let { act -> act.walletId?.let { walletMap[it]?.currency } }
                 ?: "BDT"
+            val resolvedWalletName = if (loan.initialWalletId == null || loan.initialWalletId <= 0L) {
+                "No wallet"
+            } else {
+                walletMap[loan.initialWalletId]?.name ?: "No wallet"
+            }
             LoanCalculatedSummary(
                 loan = loan,
-                walletName = walletMap[loan.initialWalletId]?.name ?: "Wallet",
+                walletName = resolvedWalletName,
                 currencySymbol = currencySymbolForCode(loanWalletCurr),
                 originalPrincipal = roundCurrency(basePrincipal),
                 totalPrincipalAdditions = roundCurrency(totalAdditions),
@@ -434,7 +544,8 @@ object AccountingEngine {
         transfers: List<TransferEntity>,
         loans: List<LoanEntity>,
         loanActivities: List<LoanActivityEntity>,
-        adjustments: List<BalanceAdjustmentEntity>
+        adjustments: List<BalanceAdjustmentEntity>,
+        fundFeatureEnabled: Boolean = true
     ): List<UnifiedLedgerEntry> {
         val walletMap = wallets.associateBy { it.id }
         val categoryMap = categories.associateBy { it.id }
@@ -443,6 +554,9 @@ object AccountingEngine {
 
         // 1. Standard Income, Expenses (including transfer fee & loan interest expenses), and Expense Reversals
         transactions.forEach { tx ->
+            if (!fundFeatureEnabled && walletMap[tx.walletId]?.isFundWallet == true) {
+                return@forEach
+            }
             val walletName = walletMap[tx.walletId]?.name ?: "Wallet"
             val cat = categoryMap[tx.categoryId]
             val catName = cat?.name ?: "Uncategorized"
@@ -461,6 +575,9 @@ object AccountingEngine {
                 tx.parentTransactionId != null -> "Service Fee"
                 tx.loanActivityId != null -> "Loan Interest"
                 isReversal -> "Refund Reversal"
+                fundFeatureEnabled && tx.tags.contains("FUND_BORROW", ignoreCase = true) -> "Personal Borrow"
+                fundFeatureEnabled && tx.tags.contains("FUND_EXPENSE", ignoreCase = true) -> "Fund Expense"
+                fundFeatureEnabled && tx.tags.contains("FUND_IN", ignoreCase = true) -> "Added to Fund"
                 else -> null
             }
 
@@ -494,16 +611,43 @@ object AccountingEngine {
         transfers.forEach { tr ->
             val srcWallet = walletMap[tr.sourceWalletId]
             val dstWallet = walletMap[tr.destinationWalletId]
+            val isSameWalletInternal = tr.sourceWalletId == tr.destinationWalletId
+            if (!fundFeatureEnabled && (isSameWalletInternal || srcWallet?.isFundWallet == true || dstWallet?.isFundWallet == true)) {
+                return@forEach
+            }
             val srcName = srcWallet?.name ?: "Source"
             val dstName = dstWallet?.name ?: "Destination"
             val srcCurr = srcWallet?.currency ?: "BDT"
             val dstCurr = dstWallet?.currency ?: "BDT"
             val isCrossCurrency = !srcCurr.equals(dstCurr, ignoreCase = true) && tr.destinationAmount > 0.0
             val dstSym = currencySymbolForCode(dstCurr)
-            val transferSubtitle = if (isCrossCurrency) {
-                "Transfer · $srcName to $dstName (+${formatMoney(tr.destinationAmount, dstSym)})"
-            } else {
-                "Transfer · $srcName to $dstName"
+            val isFundTransfer = fundFeatureEnabled && tr.note.contains("[FUND_TRANSFER]", ignoreCase = true)
+            val isFundBorrowTransfer = fundFeatureEnabled && tr.note.contains("[FUND_BORROW]", ignoreCase = true)
+            val isFundReturnTransfer = fundFeatureEnabled && tr.note.contains("[FUND_RETURN]", ignoreCase = true)
+            val cleanTransferNote = tr.note
+                .replace("[FUND_TRANSFER]", "", ignoreCase = true)
+                .replace("[FUND_BORROW]", "", ignoreCase = true)
+                .replace("[FUND_RETURN]", "", ignoreCase = true)
+                .trim()
+            val transferSubtitle = when {
+                isSameWalletInternal && isFundReturnTransfer -> "Return to Fund · $srcName (Personal → Fund)"
+                isSameWalletInternal && isFundBorrowTransfer -> "Personal Borrow · $srcName (Fund → Personal)"
+                isFundTransfer -> "Fund Transfer · $srcName Fund to $dstName Fund"
+                isCrossCurrency -> "Transfer · $srcName to $dstName (+${formatMoney(tr.destinationAmount, dstSym)})"
+                else -> "Transfer · $srcName to $dstName"
+            }
+            val transferBadge = when {
+                isFundTransfer -> "Fund Transfer"
+                isFundBorrowTransfer -> "Personal Borrow"
+                isFundReturnTransfer -> "Returned to Fund"
+                tr.feeAmount > 0 -> "Fee: ${formatMoney(tr.feeAmount, currencySymbolForCode(srcCurr))}"
+                else -> "Transfer"
+            }
+            val defaultTitle = when {
+                isSameWalletInternal && isFundReturnTransfer -> "Returned to $srcName Fund"
+                isSameWalletInternal && isFundBorrowTransfer -> "Borrowed from $srcName Fund"
+                isFundTransfer -> "$srcName Fund → $dstName Fund"
+                else -> "$srcName → $dstName"
             }
             result.add(
                 UnifiedLedgerEntry(
@@ -511,7 +655,7 @@ object AccountingEngine {
                     kind = LedgerEntryKind.TRANSFER,
                     rawId = tr.id,
                     date = tr.date,
-                    title = tr.note.ifBlank { "$srcName → $dstName" },
+                    title = cleanTransferNote.ifBlank { defaultTitle },
                     subtitle = transferSubtitle,
                     walletId = tr.sourceWalletId,
                     walletName = srcName,
@@ -523,7 +667,7 @@ object AccountingEngine {
                     signedAmount = roundCurrency(tr.principalAmount),
                     feeAmount = roundCurrency(tr.feeAmount),
                     note = tr.note,
-                    badgeText = if (tr.feeAmount > 0) "Fee: ${formatMoney(tr.feeAmount, currencySymbolForCode(srcCurr))}" else "Transfer"
+                    badgeText = transferBadge
                 )
             )
         }
@@ -531,8 +675,7 @@ object AccountingEngine {
         // 3. Loan Principal Movements
         loanActivities.forEach { act ->
             val loan = loanMap[act.loanId] ?: return@forEach
-            if (act.principalPortion <= 0.0) return@forEach
-            val walletName = walletMap[act.walletId]?.name ?: "Wallet"
+            val walletName = if (act.walletId == null || act.walletId <= 0L) "No wallet" else (walletMap[act.walletId]?.name ?: "No wallet")
             val isLent = loan.direction == LoanDirection.LENT.name
 
             val isInflow = when (act.activityType) {
@@ -555,7 +698,7 @@ object AccountingEngine {
                     date = act.date,
                     title = act.note.ifBlank { typeLabel },
                     subtitle = "$typeLabel · $walletName",
-                    walletId = act.walletId,
+                    walletId = act.walletId ?: 0L,
                     walletName = walletName,
                     categoryName = "Loan Principal",
                     iconName = "HANDSHAKE",
@@ -811,7 +954,7 @@ object AccountingEngine {
             )
         }
 
-        val bdtLoans = if (wallets.isEmpty()) loans else loans.filter { it.initialWalletId in bdtWalletIds }
+        val bdtLoans = if (wallets.isEmpty()) loans else loans.filter { it.initialWalletId == null || it.initialWalletId <= 0L || it.initialWalletId in bdtWalletIds }
         val loanSummaries = calculateLoanSummaries(bdtLoans, loanActivities, wallets)
         val receivable = loanSummaries
             .filter { it.loan.direction == LoanDirection.LENT.name }
@@ -870,7 +1013,9 @@ object AccountingEngine {
             val deltaForWallet = when (entry.kind) {
                 LedgerEntryKind.TRANSFER -> {
                     val tr = transferMap[entry.rawId]
-                    if (entry.walletId == wallet.id) {
+                    if (entry.walletId == wallet.id && entry.secondaryWalletId == wallet.id) {
+                        0.0
+                    } else if (entry.walletId == wallet.id) {
                         // Source wallet of transfer (note: fee is already a separate EXPENSE row in unifiedLedger)
                         -entry.signedAmount
                     } else {
@@ -1011,7 +1156,7 @@ object AccountingEngine {
         }
 
         // Transfers in period
-        transfers.filter { it.date in periodStart..periodEnd }.forEach { tr ->
+        transfers.filter { it.date in periodStart..periodEnd && it.sourceWalletId != it.destinationWalletId }.forEach { tr ->
             val srcName = walletMap[tr.sourceWalletId]?.name ?: "Source"
             val dstName = walletMap[tr.destinationWalletId]?.name ?: "Destination"
             val desc = tr.note.ifBlank { "$srcName to $dstName" }
@@ -1192,15 +1337,15 @@ object AccountingEngine {
 object SubscriptionManager {
     const val FREE_DAILY_TRANSACTIONS_LIMIT = 10
     const val FREE_DEFAULT_WALLETS_LIMIT = 3
-    const val FREE_CUSTOM_WALLETS_LIMIT = 0
-    const val FREE_LOAN_PERSONS_LIMIT = 2
-    const val FREE_SAVINGS_GOALS_LIMIT = 2
-    const val FREE_RECURRING_BILLS_LIMIT = 2
+    const val FREE_CUSTOM_WALLETS_LIMIT = 1
+    const val FREE_LOAN_PERSONS_LIMIT = 3
+    const val FREE_SAVINGS_GOALS_LIMIT = 3
+    const val FREE_RECURRING_BILLS_LIMIT = 3
     const val FREE_CUSTOM_CATEGORIES_LIMIT = 1
 
     val STARTER_WALLET_NAMES = setOf(
-        "cash", "bank", "mtb", "brac", "bkash", "nagad", "rocket", "rapid pass", "card", "savings",
-        "ক্যাশ", "ব্যাংক", "এমটিবি", "ব্র্যাক", "বিকাশ", "নগদ", "রকেট", "র‍্যাপিড পাস", "কার্ড", "সেভিংস"
+        "cash", "bank", "mtb", "brac", "bkash", "nagad", "rocket", "rapid pass", "card", "savings", "fund",
+        "ক্যাশ", "ব্যাংক", "এমটিবি", "ব্র্যাক", "বিকাশ", "নগদ", "রকেট", "র‍্যাপিড পাস", "কার্ড", "সেভিংস", "ফান্ড"
     )
 
     val FREE_ALLOWED_ACCENT_HEXES = setOf("#F15A24", "#14B8A6")
@@ -1360,7 +1505,7 @@ object SubscriptionManager {
         return FREE_ALLOWED_ACCENT_HEXES.contains(colorHex.trim().uppercase(Locale.ENGLISH))
     }
 
-    val FREE_ALLOWED_BOX_HEXES = setOf("", "#141416", "#1E293B", "#101726", "#FFFFFF")
+    val FREE_ALLOWED_BOX_HEXES = setOf("", "#2A2A2A", "#141416", "#1E293B", "#101726", "#FFFFFF")
 
     fun isBoxColorAllowed(
         colorHex: String,
@@ -1382,6 +1527,14 @@ object SubscriptionManager {
     }
 
     fun canUseBiometricLock(
+        tier: String?,
+        expiresAtMillis: Long?,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Boolean {
+        return isSubscriptionActive(tier, expiresAtMillis, nowMillis)
+    }
+
+    fun canUseFundFeature(
         tier: String?,
         expiresAtMillis: Long?,
         nowMillis: Long = System.currentTimeMillis()

@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RecurringTransactionEntity::class,
         SavingsGoalEntity::class
     ],
-    version = 14,
+    version = 16,
     exportSchema = false
 )
 abstract class PocketDatabase : RoomDatabase() {
@@ -167,6 +167,67 @@ abstract class PocketDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                runCatching {
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `loans_temp` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `personName` TEXT NOT NULL,
+                            `direction` TEXT NOT NULL,
+                            `principalAmount` REAL NOT NULL,
+                            `initialWalletId` INTEGER,
+                            `startDate` INTEGER NOT NULL,
+                            `dueDate` INTEGER,
+                            `interestRate` REAL NOT NULL,
+                            `interestType` TEXT NOT NULL,
+                            `note` TEXT NOT NULL,
+                            `reference` TEXT NOT NULL,
+                            `isArchived` INTEGER NOT NULL,
+                            `attachmentUri` TEXT NOT NULL,
+                            FOREIGN KEY(`initialWalletId`) REFERENCES `wallets`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("INSERT INTO `loans_temp` SELECT id, personName, direction, principalAmount, initialWalletId, startDate, dueDate, interestRate, interestType, note, reference, isArchived, attachmentUri FROM `loans`")
+                    db.execSQL("DROP TABLE `loans`")
+                    db.execSQL("ALTER TABLE `loans_temp` RENAME TO `loans`")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_loans_initialWalletId` ON `loans` (`initialWalletId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_loans_startDate` ON `loans` (`startDate`)")
+
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `loan_activities_temp` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `loanId` INTEGER NOT NULL,
+                            `activityType` TEXT NOT NULL,
+                            `principalPortion` REAL NOT NULL,
+                            `interestPortion` REAL NOT NULL,
+                            `walletId` INTEGER,
+                            `date` INTEGER NOT NULL,
+                            `note` TEXT NOT NULL,
+                            FOREIGN KEY(`loanId`) REFERENCES `loans`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                            FOREIGN KEY(`walletId`) REFERENCES `wallets`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("INSERT INTO `loan_activities_temp` SELECT id, loanId, activityType, principalPortion, interestPortion, walletId, date, note FROM `loan_activities`")
+                    db.execSQL("DROP TABLE `loan_activities`")
+                    db.execSQL("ALTER TABLE `loan_activities_temp` RENAME TO `loan_activities`")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_loan_activities_loanId` ON `loan_activities` (`loanId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_loan_activities_walletId` ON `loan_activities` (`walletId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_loan_activities_date` ON `loan_activities` (`date`)")
+                }
+            }
+        }
+
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                runCatching { db.execSQL("ALTER TABLE app_settings ADD COLUMN fundFeatureEnabled INTEGER NOT NULL DEFAULT 0") }
+            }
+        }
+
         @Volatile
         private var INSTANCE: PocketDatabase? = null
 
@@ -190,12 +251,18 @@ abstract class PocketDatabase : RoomDatabase() {
                         MIGRATION_10_11,
                         MIGRATION_11_12,
                         MIGRATION_12_13,
-                        MIGRATION_13_14
+                        MIGRATION_13_14,
+                        MIGRATION_14_15,
+                        MIGRATION_15_16
                     )
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)
                             db.setForeignKeyConstraintsEnabled(true)
+                            runCatching {
+                                db.execSQL("UPDATE app_settings SET boxColorHex = '#2A2A2A' WHERE boxColorHex = '' OR UPPER(boxColorHex) = '#141416'")
+                                db.execSQL("UPDATE app_settings SET backgroundOpacity = 0.20 WHERE ABS(backgroundOpacity - 0.85) < 0.01")
+                            }
                         }
                     })
                     .fallbackToDestructiveMigration()

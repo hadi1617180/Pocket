@@ -276,6 +276,7 @@ fun OnboardingScreen(
     var loanAmountInput by remember { mutableStateOf("") }
     var loanDirectionInput by remember { mutableStateOf(LoanDirection.LENT) }
     var loanDeadlineMillis by remember { mutableStateOf<Long?>(null) }
+    var loanNoteInput by remember { mutableStateOf("") }
     var showLoanDatePicker by remember { mutableStateOf(false) }
 
     Column(
@@ -733,6 +734,17 @@ fun OnboardingScreen(
                                 }
                             }
 
+                            OutlinedTextField(
+                                value = loanNoteInput,
+                                onValueChange = { loanNoteInput = it },
+                                label = { Text("Note / Reference (Optional)") },
+                                placeholder = { Text("e.g. Friendly help, invoice #123") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("onboarding_loan_note_input")
+                            )
+
                             OutlinedButton(
                                 onClick = {
                                     val amt = loanAmountInput.toDoubleOrNull() ?: 0.0
@@ -742,12 +754,14 @@ fun OnboardingScreen(
                                                 personName = loanPersonInput.trim(),
                                                 direction = loanDirectionInput,
                                                 principalAmount = amt,
-                                                dueDate = loanDeadlineMillis
+                                                dueDate = loanDeadlineMillis,
+                                                note = loanNoteInput.trim()
                                             )
                                         )
                                         loanPersonInput = ""
                                         loanAmountInput = ""
                                         loanDeadlineMillis = null
+                                        loanNoteInput = ""
                                     }
                                 },
                                 modifier = Modifier
@@ -781,6 +795,13 @@ fun OnboardingScreen(
                                                 text = "Due: ${SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(item.dueDate))}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        if (item.note.isNotBlank()) {
+                                            Text(
+                                                text = "Note: ${item.note}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
@@ -821,7 +842,8 @@ fun OnboardingScreen(
                                 personName = loanPersonInput.trim(),
                                 direction = loanDirectionInput,
                                 principalAmount = pendingAmt,
-                                dueDate = loanDeadlineMillis
+                                dueDate = loanDeadlineMillis,
+                                note = loanNoteInput.trim()
                             )
                         )
                     }

@@ -130,11 +130,12 @@ export const PocketCloudSync = {
     if (!userSnap.exists()) return null;
     const uData = userSnap.data();
 
-    const [walletsSnap, catsSnap, txsSnap, loansSnap, recsSnap, goalsSnap, adjsSnap, transSnap] = await Promise.all([
+    const [walletsSnap, catsSnap, txsSnap, loansSnap, loanActsSnap, recsSnap, goalsSnap, adjsSnap, transSnap] = await Promise.all([
       getDocs(collection(db, 'users', uid, 'wallets')),
       getDocs(collection(db, 'users', uid, 'categories')),
       getDocs(collection(db, 'users', uid, 'transactions')),
       getDocs(collection(db, 'users', uid, 'loans')),
+      getDocs(collection(db, 'users', uid, 'loan_activities')),
       getDocs(collection(db, 'users', uid, 'recurring_transactions')),
       getDocs(collection(db, 'users', uid, 'savings_goals')),
       getDocs(collection(db, 'users', uid, 'balance_adjustments')),
@@ -200,7 +201,7 @@ export const PocketCloudSync = {
         personName: data.personName,
         direction: data.direction || 'LENT',
         principalAmount: Number(data.principalAmount || 0),
-        initialWalletId: Number(data.initialWalletId || 1),
+        initialWalletId: (data.initialWalletId !== undefined && data.initialWalletId !== null) ? Number(data.initialWalletId) : 0,
         startDate: Number(data.startDate || Date.now()),
         dueDate: data.dueDate ? Number(data.dueDate) : null,
         interestRate: Number(data.interestRate || 0),
@@ -209,6 +210,20 @@ export const PocketCloudSync = {
         reference: data.reference || '',
         isArchived: Boolean(data.isArchived),
         attachmentUri: data.attachmentUri || ''
+      };
+    });
+
+    const loanActivities = loanActsSnap.docs.map(d => {
+      const data = d.data();
+      return {
+        id: Number(data.entityId || d.id),
+        loanId: Number(data.loanId),
+        activityType: data.activityType || 'REPAYMENT',
+        principalPortion: Number(data.principalPortion || 0),
+        interestPortion: Number(data.interestPortion || 0),
+        walletId: (data.walletId !== undefined && data.walletId !== null) ? Number(data.walletId) : 0,
+        date: Number(data.date || Date.now()),
+        note: data.note || ''
       };
     });
 
@@ -309,7 +324,8 @@ export const PocketCloudSync = {
         transactions,
         transfers,
         loans,
-        loanActivities: [],
+        loanActivities,
+        loanPayments: loanActivities,
         adjustments,
         recurringTransactions,
         savingsGoals,
@@ -456,7 +472,7 @@ export const PocketCloudSync = {
         personName: String(l.personName || 'Person').slice(0, 150),
         direction: (l.direction === 'BORROWED') ? 'BORROWED' : 'LENT',
         principalAmount: Number(l.principalAmount || 0),
-        initialWalletId: Number(l.initialWalletId || 1),
+        initialWalletId: Number(l.initialWalletId ?? 0),
         startDate: Number(l.startDate || Date.now()),
         dueDate: l.dueDate ? Number(l.dueDate) : null,
         interestRate: Number(l.interestRate || 0),
@@ -467,6 +483,45 @@ export const PocketCloudSync = {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       }, { merge: true });
+    }
+
+    // Loan Activities (Disbursements & Repayments)
+    const acts = (state.loanPayments || state.loanActivities || []).slice(-100);
+    for (const act of acts) {
+      const ref = doc(db, 'users', uid, 'loan_activities', String(act.id));
+      batch.set(ref, {
+        userId: uid,
+        entityId: Number(act.id),
+        loanId: Number(act.loanId),
+        activityType: (act.activityType === 'DISBURSEMENT' || act.activityType === 'ADJUSTMENT') ? act.activityType : 'REPAYMENT',
+        principalPortion: Number(act.principalPortion || 0),
+        interestPortion: Number(act.interestPortion || 0),
+        walletId: Number(act.walletId ?? 0),
+        date: Number(act.date || Date.now()),
+        note: String(act.note || '').slice(0, 1000),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    // Clean up orphaned cloud records for loans and loan activities
+    try {
+      const cloudLoans = await getDocs(collection(db, 'users', uid, 'loans'));
+      const localLoanIds = new Set((state.loans || []).map(l => String(l.id)));
+      for (const d of cloudLoans.docs) {
+        if (!localLoanIds.has(d.id)) {
+          batch.delete(d.ref);
+        }
+      }
+      const cloudActs = await getDocs(collection(db, 'users', uid, 'loan_activities'));
+      const localActIds = new Set((state.loanPayments || state.loanActivities || []).map(a => String(a.id)));
+      for (const d of cloudActs.docs) {
+        if (!localActIds.has(d.id)) {
+          batch.delete(d.ref);
+        }
+      }
+    } catch (e) {
+      console.warn("Cloud cleanup check warning:", e);
     }
 
     await batch.commit();

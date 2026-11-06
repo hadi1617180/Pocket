@@ -53,7 +53,8 @@ object PocketLocalizer {
         "rocket" to "রকেট",
         "rapid pass" to "র‍্যাপিড পাস",
         "card" to "কার্ড",
-        "savings" to "সেভিংস"
+        "savings" to "সেভিংস",
+        "fund" to "ফান্ড"
     )
 
     private val defaultCategoryMap = mapOf(
@@ -385,6 +386,7 @@ object PocketLocalizer {
         putBoth("Payment Due Day", "পরিশোধের শেষ দিন")
         putBoth("Payment Due Day (1-31)", "পরিশোধের শেষ দিন (১-৩১)")
         putBoth("No wallet found", "কোনো ওয়ালেট পাওয়া যায়নি")
+        putBoth("No wallet", "কোনো ওয়ালেট নেই")
         putBoth("Tap to open", "খুলতে ট্যাপ করুন")
 
         // Transactions & Transfers
@@ -512,6 +514,13 @@ object PocketLocalizer {
         putBoth("Income Categories", "আয়ের ক্যাটাগরি")
         putBoth("Expense Categories", "ব্যয়ের ক্যাটাগরি")
         putBoth("Financial Modules", "আর্থিক মডিউল")
+        putBoth("Enable Fund Feature", "ফান্ড ফিচার চালু করুন")
+        putBoth("Add Tags (Optional)", "ট্যাগ যোগ করুন (ঐচ্ছিক)")
+        putBoth("Fund feature enabled.", "ফান্ড ফিচার চালু করা হয়েছে।")
+        putBoth("Fund feature disabled.", "ফান্ড ফিচার বন্ধ করা হয়েছে।")
+        putBoth("Pull down to sync", "সিঙ্ক করতে নিচে টানুন")
+        putBoth("Release to sync with Cloud", "ক্লাউড সিঙ্ক করতে ছেড়ে দিন")
+        putBoth("Synced latest changes from Google Cloud.", "গুগল ক্লাউড থেকে সর্বশেষ তথ্য সিঙ্ক করা হয়েছে।")
         putBoth("Wallet Balance Reconciliation", "ওয়ালেট ব্যালেন্স সমন্বয়")
         putBoth("Widgets", "উইজেট")
         putBoth("Monthly Statement", "মাসিক স্টেটমেন্ট")
@@ -613,6 +622,61 @@ object PocketLocalizer {
         // Period Labels
         putBoth("This Month", "এই মাস")
         putBoth("Last Month", "গত মাস")
+
+        // Fund Wallets & Personal Borrow
+        putBoth("Fund", "ফান্ড")
+        putBoth("Combined Fund", "সম্মিলিত ফান্ড")
+        putBoth("Combined Fund Details", "সম্মিলিত ফান্ডের বিস্তারিত")
+        putBoth("Auto-Summed", "স্বয়ংক্রিয় যোগফল")
+        putBoth("Auto-Summed Virtual Fund Across All Wallets", "সব ওয়ালেটের সম্মিলিত ভার্চুয়াল ফান্ড")
+        putBoth("Total Fund Balance", "মোট ফান্ড ব্যালেন্স")
+        putBoth("Virtual Fund Option", "ভার্চুয়াল ফান্ড অপশন")
+        putBoth("Track official/investment fund & personal borrow inside this wallet", "এই ওয়ালেটের ভেতরে অফিসিয়াল/ইনভেস্টমেন্ট ফান্ড ও ব্যক্তিগত ধার হিসাব করুন")
+        putBoth("Initial / Opening Fund in this Wallet (৳)", "এই ওয়ালেটে প্রারম্ভিক ফান্ডের পরিমাণ (৳)")
+        putBoth("Virtual Fund (Inside this Wallet)", "ভার্চুয়াল ফান্ড (এই ওয়ালেটের ভেতরে)")
+        putBoth("Fund Balance", "ফান্ড ব্যালেন্স")
+        putBoth("Personal Balance", "ব্যক্তিগত ব্যালেন্স")
+        putBoth("Personal", "ব্যক্তিগত")
+        putBoth("Personal Income", "ব্যক্তিগত আয়")
+        putBoth("Add to Fund", "ফান্ডে যোগ")
+        putBoth("Official Spent", "অফিসিয়াল খরচ")
+        putBoth("Fund Breakdown by Wallet", "ওয়ালেট অনুযায়ী ফান্ডের হিসাব")
+        putBoth("Fund Activity History", "ফান্ডের লেনদেনের ইতিহাস")
+        putBoth("No fund transactions recorded yet.", "এখনো কোনো ফান্ড লেনদেন রেকর্ড করা হয়নি।")
+        putBoth("Fund Transfer", "ফান্ড ট্রান্সফার")
+        putBoth("Keep as Fund", "ফান্ড হিসেবে রাখুন")
+        putBoth("Tracker", "ট্র্যাকার")
+        putBoth("Pay From Wallet (Personal Balance)", "যে ওয়ালেট থেকে ফেরত দেবেন (ব্যক্তিগত ব্যালেন্স)")
+        putBoth("Add Returned Money To Fund In", "যে ওয়ালেটের ফান্ডে জমা হবে")
+        putBoth("Investment / project fund", "ইনভেস্টমেন্ট / প্রজেক্ট ফান্ড")
+        putBoth("Regular (Fund Expense)", "নিয়মিত (ফান্ডের খরচ)")
+        putBoth("Fund Expense", "ফান্ডের খরচ")
+        putBoth("Borrow from fund", "ফান্ড থেকে ধার")
+        putBoth("New category", "নতুন ক্যাটাগরি")
+        putBoth("Save & Add another", "সেভ ও আরেকটি যোগ করুন")
+        putBoth("Source", "উৎস")
+        putBoth("Destination", "গন্তব্য")
+        putBoth("Transfer Charge", "ট্রান্সফার চার্জ")
+        putBoth("Edit Income", "আয় সম্পাদনা")
+        putBoth("Edit Expense", "ব্যয় সম্পাদনা")
+        putBoth("Edit Transfer", "ট্রান্সফার সম্পাদনা")
+        putBoth("Personal Borrow", "ব্যক্তিগত ধার")
+        putBoth("Personal Borrowed", "ব্যক্তিগত ধার")
+        putBoth("Personal Borrowed Due", "ব্যক্তিগত ধার বকেয়া")
+        putBoth("Borrowed Due", "ধার বকেয়া")
+        putBoth("Return to Fund", "ফান্ডে ফেরত দিন")
+        putBoth("Return Money", "টাকা ফেরত দিন")
+        putBoth("Return Amount (৳)", "ফেরতের পরিমাণ (৳)")
+        putBoth("Transfer From Wallet", "কোন ওয়ালেট থেকে ফেরত দেবেন")
+        putBoth("Regular Transfer", "নিয়মিত ট্রান্সফার")
+        putBoth("Return Borrowed", "ধার ফেরত")
+        putBoth("Returned to Fund", "ফান্ডে ফেরত")
+        putBoth("50% Return", "৫০% ফেরত")
+        putBoth("100% Full Due", "১০০% সম্পূর্ণ বকেয়া")
+        putBoth("Savings Goals", "সঞ্চয় লক্ষ্য")
+        putBoth("Add Goal", "লক্ষ্য যোগ করুন")
+        putBoth("New Savings Goal", "নতুন সঞ্চয় লক্ষ্য")
+        putBoth("Edit Savings Goal", "সঞ্চয় লক্ষ্য সম্পাদনা")
     }
 
     private val monthReplacements = listOf(

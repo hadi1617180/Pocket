@@ -6,6 +6,9 @@ import {
   DEFAULT_STARTER_WALLETS,
   DEFAULT_CATEGORIES,
   DEFAULT_SETTINGS,
+  VIRTUAL_FUND_WALLET_ID,
+  parseWalletVirtualFund,
+  withWalletVirtualFund,
   evaluateMathExpression,
   parseFinancialSms
 } from './accounting.js';
@@ -282,7 +285,7 @@ export function applyBackupPayloadToState(p, skipCloudPush = true) {
   AppState.transactionSplits = p.transactionSplits || [];
   AppState.transfers = p.transfers || [];
   AppState.loans = p.loans || [];
-  AppState.loanPayments = p.loanPayments || [];
+  AppState.loanPayments = (p.loanPayments && p.loanPayments.length > 0) ? p.loanPayments : (p.loanActivities || []);
   AppState.adjustments = p.adjustments || [];
   AppState.recurringTransactions = p.recurringTransactions || [];
   AppState.savingsGoals = p.savingsGoals || [];
@@ -363,8 +366,25 @@ export function computeDerivedData() {
     AppState.settings.subscriptionExpiresAt
   );
 
+  const fundEnabledSummaries = walletSummaries.filter(ws => ws.hasVirtualFund);
+  const hasActiveVirtualFund = fundEnabledSummaries.length > 0;
+  const totalFundBalance = AccountingEngine.roundCurrency(
+    fundEnabledSummaries.reduce((sum, ws) => sum + (ws.fundBalance || 0), 0)
+  );
+  const totalFundOfficialSpent = AccountingEngine.roundCurrency(
+    fundEnabledSummaries.reduce((sum, ws) => sum + (ws.fundOfficialSpent || 0), 0)
+  );
+  const totalFundBorrowedDue = AccountingEngine.roundCurrency(
+    fundEnabledSummaries.reduce((sum, ws) => sum + (ws.fundBorrowedDue || 0), 0)
+  );
+
   return {
     walletSummaries,
+    fundEnabledSummaries,
+    hasActiveVirtualFund,
+    totalFundBalance,
+    totalFundOfficialSpent,
+    totalFundBorrowedDue,
     totalAvailableBalance,
     foreignCurrencyTotals,
     loanSummaries,
@@ -686,6 +706,10 @@ function renderOnboardingScreen() {
                 <input type="date" class="pocket-input" value="${ln.dueDateMs ? new Date(ln.dueDateMs).toISOString().slice(0, 10) : ''}" onchange="window.PocketApp.updateOnboardingLoanDate(${idx}, 'dueDateMs', this.value)" />
               </div>
             </div>
+            <div>
+              <label class="pocket-input-label">${t('Note / Reference')} (${t('Optional')})</label>
+              <input type="text" class="pocket-input" placeholder="${t('e.g. Friendly help, invoice #123')}" value="${escHtml(ln.note || '')}" oninput="window.PocketApp.updateOnboardingLoan(${idx}, 'note', this.value)" />
+            </div>
           </div>
         `).join('')}
 
@@ -890,9 +914,20 @@ function renderBalancesScreen(derived) {
               <div style="flex:1;min-width:0;">
                 <div style="display:flex;align-items:center;gap:6px;">
                   <span style="font-size:1rem;font-weight:700;">${escHtml(t(w.name))}</span>
+                  ${ws.hasVirtualFund ? `<span style="padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;background:rgba(var(--accent-rgb),0.15);color:var(--accent-color);">${t('Fund')}</span>` : ''}
                   ${curr !== 'BDT' ? `<span style="padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;background:rgba(var(--accent-rgb),0.15);color:var(--accent-color);">${curr}</span>` : ''}
                 </div>
                 ${!w.includeInTotalBalance ? `<div style="font-size:0.74rem;color:var(--text-muted);">${t('Not in total balance')}</div>` : ''}
+                ${ws.hasVirtualFund ? `
+                  <div style="font-size:0.74rem;font-weight:600;color:var(--accent-color);margin-top:2px;">
+                    ${t('Fund')}: ${hide ? `${wSym} ••••` : AccountingEngine.formatMoney(ws.fundBalance, wSym, false)} • ${t('Personal')}: ${hide ? `${wSym} ••••` : AccountingEngine.formatMoney(ws.personalBalance, wSym, false)}
+                  </div>
+                ` : ''}
+                ${ws.hasVirtualFund && (ws.fundBorrowedDue || 0) > 0.005 ? `
+                  <div style="font-size:0.74rem;font-weight:600;color:var(--expense-text);margin-top:2px;">
+                    ${t('Personal Borrowed')}: ${hide ? `${wSym} ••••` : AccountingEngine.formatMoney(ws.fundBorrowedDue, wSym, false)}
+                  </div>
+                ` : ''}
                 ${w.type === 'CARD' && w.creditLimit > 0 ? `
                   <div style="font-size:0.73rem;color:var(--text-secondary);margin-top:2px;">
                     Limit: ${hide ? `${wSym} ••••` : AccountingEngine.formatMoney(w.creditLimit, wSym, false)}
@@ -913,9 +948,38 @@ function renderBalancesScreen(derived) {
             </div>
           `;
         }).join('')}
+
+        ${derived.hasActiveVirtualFund ? (() => {
+          const breakdownStr = derived.fundEnabledSummaries.map(fs => {
+            const fSym = AccountingEngine.currencySymbolForCode(fs.wallet.currency);
+            return `${t(fs.wallet.name)}: ${hide ? `${fSym} •••` : AccountingEngine.formatMoney(fs.fundBalance, fSym, false)}`;
+          }).join(' • ');
+          return `
+            <div class="pocket-card pocket-clickable" style="padding:14px 16px;display:flex;align-items:center;gap:14px;border:1.5px solid rgba(var(--accent-rgb),0.45);" onclick="window.PocketApp.openWalletDetail(${VIRTUAL_FUND_WALLET_ID})">
+              <div style="width:46px;height:46px;border-radius:14px;background:rgba(var(--accent-rgb),0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <span class="material-symbols-rounded" style="font-size:26px;color:var(--accent-color);">business_center</span>
+              </div>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-size:1rem;font-weight:700;">${t('Combined Fund')}</span>
+                  <span style="padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;background:rgba(var(--accent-rgb),0.15);color:var(--accent-color);">${t('Auto-Summed')}</span>
+                </div>
+                <div style="font-size:0.74rem;font-weight:600;color:var(--accent-color);margin-top:2px;">${escHtml(breakdownStr)}</div>
+                <div style="font-size:0.73rem;color:${derived.totalFundBorrowedDue > 0.005 ? 'var(--expense-text)' : 'var(--text-secondary)'};margin-top:2px;">
+                  ${t('Official Spent')}: ${hide ? '৳ ••••' : AccountingEngine.formatMoney(derived.totalFundOfficialSpent, '৳', false)}${derived.totalFundBorrowedDue > 0.005 ? ` • ${t('Borrowed Due')}: ${hide ? '৳ ••••' : AccountingEngine.formatMoney(derived.totalFundBorrowedDue, '৳', false)}` : ''}
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div class="tabular-money-md" style="color:var(--accent-color);">
+                  ${hide ? '৳ ••••' : AccountingEngine.formatMoney(derived.totalFundBalance, '৳')}
+                </div>
+              </div>
+            </div>
+          `;
+        })() : ''}
       </div>
 
-      <!-- Savings Goals Section (if any exist or button to add) -->
+      <!-- Savings Goals Section -->
       <div class="pocket-card" style="padding:16px;display:flex;flex-direction:column;gap:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div style="display:flex;align-items:center;gap:8px;">
@@ -924,11 +988,11 @@ function renderBalancesScreen(derived) {
           </div>
           <button class="pocket-chip" onclick="window.PocketApp.openSavingsGoalDialog()">
             <span class="material-symbols-rounded" style="font-size:16px;">add</span>
-            <span>${t('New')}</span>
+            <span>${t('Add Goal')}</span>
           </button>
         </div>
         ${AppState.savingsGoals.length === 0 ? `
-          <div style="font-size:0.82rem;color:var(--text-muted);">${t('Track dedicated targets like Emergency Fund, Gadget, or Hajj/Trip.')}</div>
+          <div style="font-size:0.82rem;color:var(--text-muted);">${t('No savings pots yet. Tap + Add Goal to create a pot for Emergency Fund, Phone, or Tour.')}</div>
         ` : AppState.savingsGoals.map(g => {
           const pct = g.targetAmount > 0 ? Math.min(100, Math.round(((g.savedAmount || 0) / g.targetAmount) * 100)) : 0;
           return `
@@ -940,9 +1004,13 @@ function renderBalancesScreen(derived) {
               <div style="width:100%;height:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;">
                 <div style="width:${pct}%;height:100%;background:var(--income-text);"></div>
               </div>
-              <div style="display:flex;justify-content:flex-end;gap:8px;">
-                <button class="pocket-chip" onclick="window.PocketApp.fundSavingsGoal(${g.id}, true)">+ ${t('Add Savings')}</button>
-                <button class="pocket-chip" onclick="window.PocketApp.deleteSavingsGoal(${g.id})" style="color:var(--expense-text);">${t('Delete')}</button>
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <span style="font-size:0.74rem;color:var(--text-muted);">${pct}% ${t('saved')}</span>
+                <div style="display:flex;gap:8px;">
+                  <button class="pocket-chip" onclick="window.PocketApp.fundSavingsGoal(${g.id}, false)">− ${t('Withdraw')}</button>
+                  <button class="pocket-chip" onclick="window.PocketApp.fundSavingsGoal(${g.id}, true)">+ ${t('Add')}</button>
+                  <button class="pocket-chip" onclick="window.PocketApp.deleteSavingsGoal(${g.id})" style="color:var(--expense-text);">${t('Delete')}</button>
+                </div>
               </div>
             </div>
           `;
@@ -957,12 +1025,102 @@ function renderBalancesScreen(derived) {
 // ============================================================================
 function renderWalletDetailScreen(derived) {
   const wId = Number(AppState.selectedWalletDetailId);
+  const hide = AppState.settings.hideBalancesPrivacy;
+
+  if (wId === VIRTUAL_FUND_WALLET_ID) {
+    const fundEntries = derived.unifiedLedger.filter(e => {
+      const tagsUpper = String(e.tags || '').toUpperCase();
+      return tagsUpper.includes('FUND_IN') || tagsUpper.includes('FUND_EXPENSE') || tagsUpper.includes('FUND_BORROW') ||
+        e.badgeLabel === 'FUND TRANSFER' || e.badgeLabel === 'PERSONAL BORROW' || e.badgeLabel === 'RETURNED TO FUND' ||
+        e.badgeLabel === 'FUND EXPENSE' || e.badgeLabel === 'FUND IN';
+    });
+    const firstFundW = derived.fundEnabledSummaries[0]?.wallet?.id || derived.walletSummaries[0]?.wallet?.id || 1;
+    return `
+      <div style="padding:12px 16px 48px;display:flex;flex-direction:column;gap:14px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="pocket-btn-outlined" style="min-height:40px;padding:6px 10px;" onclick="window.PocketApp.navigateBack()">
+            <span class="material-symbols-rounded">arrow_back</span>
+          </button>
+          <h2 style="margin:0;font-size:1.2rem;font-weight:800;">${t('Combined Fund Details')}</h2>
+        </div>
+
+        <div class="pocket-card-hero" style="padding:20px;display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="width:52px;height:52px;border-radius:16px;background:rgba(var(--accent-rgb),0.15);display:flex;align-items:center;justify-content:center;">
+              <span class="material-symbols-rounded" style="font-size:28px;color:var(--accent-color);">business_center</span>
+            </div>
+            <div>
+              <div style="font-size:0.8rem;color:var(--text-secondary);">${t('Auto-Summed Virtual Fund Across All Wallets')}</div>
+              <div class="tabular-money-lg" style="color:var(--accent-color);">${hide ? '৳ •••••' : AccountingEngine.formatMoney(derived.totalFundBalance, '৳')}</div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="pocket-card-elevated" style="padding:10px;">
+              <div style="font-size:0.75rem;color:var(--text-muted);">${t('Official Spent')}</div>
+              <div class="tabular-money-sm" style="color:var(--expense-text);">${hide ? '৳ ••••' : AccountingEngine.formatMoney(derived.totalFundOfficialSpent, '৳')}</div>
+            </div>
+            <div class="pocket-card-elevated" style="padding:10px;">
+              <div style="font-size:0.75rem;color:${derived.totalFundBorrowedDue > 0.005 ? 'var(--expense-text)' : 'var(--text-muted)'};">${t('Personal Borrowed Due')}</div>
+              <div class="tabular-money-sm" style="color:${derived.totalFundBorrowedDue > 0.005 ? 'var(--expense-text)' : 'var(--text-primary)'};">${hide ? '৳ ••••' : AccountingEngine.formatMoney(derived.totalFundBorrowedDue, '৳')}</div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="pocket-btn-primary" style="flex:1;min-height:40px;" onclick="window.PocketApp.openReturnToFundDialog(${firstFundW})">
+              <span class="material-symbols-rounded" style="font-size:16px;">swap_horiz</span>
+              <span>${t('Return to Fund')}</span>
+            </button>
+            <button class="pocket-btn-outlined" style="flex:1;min-height:40px;" onclick="window.PocketApp.openTransferForm()">
+              <span>${t('Fund Transfer')}</span>
+            </button>
+          </div>
+        </div>
+
+        <h3 style="margin:4px 0 0;font-size:1rem;">${t('Fund Breakdown by Wallet')}</h3>
+        ${derived.fundEnabledSummaries.map(fs => {
+          const fSym = AccountingEngine.currencySymbolForCode(fs.wallet.currency);
+          return `
+            <div class="pocket-card pocket-clickable" style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;" onclick="window.PocketApp.openWalletDetail(${fs.wallet.id})">
+              <div>
+                <div style="font-weight:700;">${escHtml(t(fs.wallet.name))}</div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">
+                  ${t('Total Balance')}: ${hide ? `${fSym} ••••` : AccountingEngine.formatMoney(fs.currentBalance, fSym)} • ${t('Personal')}: ${hide ? `${fSym} ••••` : AccountingEngine.formatMoney(fs.personalBalance, fSym)}
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:0.72rem;color:var(--accent-color);font-weight:700;">${t('Fund Balance')}</div>
+                <div class="tabular-money-sm" style="color:var(--accent-color);">${hide ? `${fSym} ••••` : AccountingEngine.formatMoney(fs.fundBalance, fSym)}</div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+
+        <h3 style="margin:4px 0 0;font-size:1rem;">${t('Fund Activity History')} (${fundEntries.length})</h3>
+        ${fundEntries.length === 0 ? `
+          <div class="pocket-card" style="padding:24px;text-align:center;color:var(--text-muted);">${t('No fund transactions recorded yet.')}</div>
+        ` : fundEntries.map(e => {
+          const dStr = new Date(e.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+          return `
+            <div class="pocket-card" style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+              <div>
+                <div style="font-weight:700;font-size:0.9rem;">${escHtml(t(e.title))} <span style="font-size:0.7rem;color:var(--accent-color);">[${escHtml(e.badgeLabel)}]</span></div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">${dStr} • ${escHtml(e.subtitle)}</div>
+              </div>
+              <div class="tabular-money-sm">${escHtml(e.signedAmountText)}</div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
   const ws = derived.walletSummaries.find(s => s.wallet.id === wId) || derived.walletSummaries[0];
   if (!ws) return renderBalancesScreen(derived);
   const w = ws.wallet;
-  const hide = AppState.settings.hideBalancesPrivacy;
   const sym = AccountingEngine.currencySymbolForCode(w.currency);
   const runningRows = AccountingEngine.buildWalletRunningBalanceLedger(w, derived.unifiedLedger);
+  const hasFund = Boolean(ws.hasVirtualFund);
 
   return `
     <div style="padding:12px 16px 48px;display:flex;flex-direction:column;gap:14px;">
@@ -995,6 +1153,35 @@ function renderWalletDetailScreen(derived) {
             <div class="tabular-money-lg">${hide ? `${sym} •••••` : AccountingEngine.formatMoney(ws.currentBalance, sym)}</div>
           </div>
         </div>
+        ${hasFund ? `
+          <div class="pocket-card-elevated" style="padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:0.78rem;font-weight:700;color:var(--accent-color);">${t('Virtual Fund (Inside this Wallet)')}</span>
+              <button class="pocket-btn-primary" style="min-height:34px;padding:4px 12px;font-size:0.78rem;" onclick="window.PocketApp.openReturnToFundDialog(${w.id})">
+                <span class="material-symbols-rounded" style="font-size:15px;">swap_horiz</span>
+                <span>${t('Return to Fund')}</span>
+              </button>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.78rem;">
+              <div>
+                <div style="color:var(--text-muted);">${t('Fund Balance')}</div>
+                <div class="tabular-money-sm" style="color:var(--accent-color);">${hide ? `${sym} ••••` : AccountingEngine.formatMoney(ws.fundBalance, sym)}</div>
+              </div>
+              <div>
+                <div style="color:var(--text-muted);">${t('Personal Balance')}</div>
+                <div class="tabular-money-sm">${hide ? `${sym} ••••` : AccountingEngine.formatMoney(ws.personalBalance, sym)}</div>
+              </div>
+              <div>
+                <div style="color:var(--text-muted);">${t('Official Spent')}</div>
+                <div class="tabular-money-sm" style="color:var(--expense-text);">${hide ? `${sym} ••••` : AccountingEngine.formatMoney(ws.fundOfficialSpent, sym)}</div>
+              </div>
+              <div>
+                <div style="color:${(ws.fundBorrowedDue || 0) > 0.005 ? 'var(--expense-text)' : 'var(--text-muted)'};">${t('Personal Borrowed Due')}</div>
+                <div class="tabular-money-sm" style="color:${(ws.fundBorrowedDue || 0) > 0.005 ? 'var(--expense-text)' : 'var(--text-primary)'};">${hide ? `${sym} ••••` : AccountingEngine.formatMoney(ws.fundBorrowedDue || 0, sym)}</div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding-top:10px;border-top:1px solid var(--divider-subtle);font-size:0.78rem;">
           <div>
             <div style="color:var(--text-muted);">${t('Opening Balance')}</div>
@@ -1116,7 +1303,7 @@ function renderTransactionFormScreen(derived) {
         ` : ''}
       </div>
 
-      <!-- Wallet Selector -->
+      <!-- Wallet Selector + Fund Expense / Personal Borrow toggle when a FUND wallet is selected -->
       <div class="pocket-card" style="padding:16px;display:flex;flex-direction:column;gap:10px;">
         <label class="pocket-input-label">${t('Wallet')}</label>
         <div class="no-scrollbar" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;">
@@ -1134,6 +1321,56 @@ function renderTransactionFormScreen(derived) {
             `;
           }).join('')}
         </div>
+        ${(() => {
+          const selSummary = derived.walletSummaries.find(ws => ws.wallet.id === selectedWalletId);
+          const selWallet = selSummary?.wallet;
+          if (!selWallet || !selSummary?.hasVirtualFund) return '';
+          if (type === 'EXPENSE') {
+            const expMode = AppState._txFormFundExpenseMode || 'PERSONAL';
+            return `
+              <div style="border-top:1px solid var(--card-border);padding-top:10px;display:flex;flex-direction:column;gap:6px;">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button type="button" class="pocket-chip ${expMode === 'PERSONAL' ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTxFundExpenseMode('PERSONAL')">
+                    <span>${t('Personal')}</span>
+                  </button>
+                  <button type="button" class="pocket-chip ${expMode === 'FUND_EXPENSE' ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTxFundExpenseMode('FUND_EXPENSE')">
+                    <span class="material-symbols-rounded" style="font-size:15px;">business_center</span>
+                    <span>${t('Fund Expense')}</span>
+                  </button>
+                  <button type="button" class="pocket-chip ${expMode === 'FUND_BORROW' ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTxFundExpenseMode('FUND_BORROW')">
+                    <span class="material-symbols-rounded" style="font-size:15px;">sync_alt</span>
+                    <span>${t('Personal Borrow')}</span>
+                  </button>
+                </div>
+                <div style="font-size:0.74rem;color:${expMode === 'PERSONAL' ? 'var(--text-muted)' : 'var(--accent-color)'};">
+                  ${expMode === 'FUND_EXPENSE'
+                    ? `Deducted from ${escHtml(selWallet.name)}'s Virtual Fund as an official/project expense.`
+                    : expMode === 'FUND_BORROW'
+                      ? `Deducted from ${escHtml(selWallet.name)}'s Virtual Fund as a returnable Personal Borrow.`
+                      : `Deducted from your personal balance in ${escHtml(selWallet.name)} (Virtual Fund untouched).`
+                  }
+                </div>
+              </div>
+            `;
+          }
+          if (type === 'INCOME') {
+            const addToFund = !!AppState._txFormFundIncomeAdd;
+            return `
+              <div style="border-top:1px solid var(--card-border);padding-top:10px;display:flex;flex-direction:column;gap:6px;">
+                <div style="display:flex;gap:8px;">
+                  <button type="button" class="pocket-chip ${!addToFund ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTxFundIncomeMode(false)">
+                    <span>${t('Personal Income')}</span>
+                  </button>
+                  <button type="button" class="pocket-chip ${addToFund ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTxFundIncomeMode(true)">
+                    <span class="material-symbols-rounded" style="font-size:15px;">business_center</span>
+                    <span>${t('Add to Fund')}</span>
+                  </button>
+                </div>
+              </div>
+            `;
+          }
+          return '';
+        })()}
       </div>
 
       <!-- Category Selector -->
@@ -1211,6 +1448,11 @@ function renderTransferFormScreen(derived) {
   const wallets = derived.walletSummaries;
   const srcId = AppState._trSrcId || wallets[0]?.wallet?.id || 1;
   const dstId = AppState._trDstId || wallets[1]?.wallet?.id || wallets[0]?.wallet?.id || 2;
+  const srcSummary = wallets.find(ws => ws.wallet.id === srcId);
+  const dstSummary = wallets.find(ws => ws.wallet.id === dstId);
+  const isSrcFund = Boolean(srcSummary?.hasVirtualFund);
+  const isDstFund = Boolean(dstSummary?.hasVirtualFund);
+  const fundMode = AppState._trFundMode || 'REGULAR';
   return `
     <div style="padding:12px 16px 48px;display:flex;flex-direction:column;gap:14px;">
       <div style="display:flex;align-items:center;gap:10px;">
@@ -1238,6 +1480,29 @@ function renderTransferFormScreen(derived) {
             </button>
           `).join('')}
         </div>
+
+        ${(isSrcFund || isDstFund) ? `
+          <div style="border-top:1px solid var(--card-border);padding-top:10px;display:flex;flex-direction:column;gap:6px;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button type="button" class="pocket-chip ${fundMode === 'REGULAR' ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTransferFundMode('REGULAR')">
+                ${t('Regular Transfer')}
+              </button>
+              ${isSrcFund ? `
+                <button type="button" class="pocket-chip ${fundMode === 'FUND_TRANSFER' ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTransferFundMode('FUND_TRANSFER')">
+                  ${t('Fund Transfer')}
+                </button>
+                <button type="button" class="pocket-chip ${fundMode === 'BORROW' ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTransferFundMode('BORROW')">
+                  ${t('Personal Borrow')}
+                </button>
+              ` : ''}
+              ${isDstFund ? `
+                <button type="button" class="pocket-chip ${fundMode === 'RETURN' ? 'selected' : ''}" style="flex:1;justify-content:center;" onclick="window.PocketApp.setTransferFundMode('RETURN')">
+                  ${t('Return to Fund')}
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        ` : ''}
 
         <div class="pocket-input-group" style="margin-top:6px;">
           <label class="pocket-input-label">${t('Transfer Amount')} (৳)</label>
@@ -1670,6 +1935,16 @@ function renderLoansScreen(derived) {
                 </div>
                 <span class="material-symbols-rounded" style="font-size:18px;color:var(--accent-color);">edit_calendar</span>
               </div>
+
+              ${s.loan.note && s.loan.note.trim() ? `
+                <div class="pocket-card-elevated" style="padding:8px 12px;display:flex;align-items:center;gap:8px;border-radius:10px;">
+                  <span class="material-symbols-rounded" style="font-size:16px;color:var(--accent-color);">description</span>
+                  <div style="display:flex;flex-direction:column;">
+                    <span style="font-size:0.68rem;color:var(--text-muted);">${t('Note / Reference')}</span>
+                    <span style="font-size:0.82rem;color:var(--text-primary);">${escHtml(s.loan.note.trim())}</span>
+                  </div>
+                </div>
+              ` : ''}
 
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
@@ -2401,10 +2676,10 @@ window.PocketApp = {
           personName: ln.personName.trim(),
           direction: ln.direction,
           principalAmount: AccountingEngine.roundCurrency(amt),
-          initialWalletId: firstActive.id,
+          initialWalletId: 0,
           startDate: ln.loanDateMs || Date.now(),
           dueDate: ln.dueDateMs || null,
-          note: 'Initial Loan',
+          note: ln.note && ln.note.trim() ? ln.note.trim() : 'Existing loan',
           attachmentUri: ''
         });
       }
@@ -2446,12 +2721,31 @@ window.PocketApp = {
     AppState._txFormDateMs = Date.now();
     AppState._txFormAttachment = '';
     AppState._txFormCatId = null;
+    AppState._txFormFundId = null;
+    AppState._txFormFundPersonalBorrow = false;
     navigateTo('TX_FORM');
+  },
+
+  selectTxVirtualFund(fundId) {
+    AppState._txFormFundId = fundId;
+    if (!fundId) AppState._txFormFundPersonalBorrow = false;
+    renderApp();
+  },
+
+  setTxFundExpenseMode(mode) {
+    AppState._txFormFundExpenseMode = mode || 'PERSONAL';
+    renderApp();
+  },
+
+  setTxFundIncomeMode(addToFund) {
+    AppState._txFormFundIncomeAdd = !!addToFund;
+    renderApp();
   },
 
   editTransaction(txId) {
     const tx = AppState.transactions.find(t => t.id === txId);
     if (!tx) return;
+    const tagsUpper = String(tx.tags || '').toUpperCase();
     AppState.editingTx = tx;
     AppState.txFormInitialType = tx.type === 'INCOME' ? 'INCOME' : 'EXPENSE';
     AppState.txFormInitialWalletId = tx.walletId;
@@ -2462,6 +2756,12 @@ window.PocketApp = {
     AppState._txFormDateMs = tx.date;
     AppState._txFormAttachment = tx.attachmentUri || '';
     AppState._txFormCatId = tx.categoryId;
+    AppState._txFormFundExpenseMode = tagsUpper.includes('FUND_BORROW')
+      ? 'FUND_BORROW'
+      : tagsUpper.includes('FUND_EXPENSE')
+        ? 'FUND_EXPENSE'
+        : 'PERSONAL';
+    AppState._txFormFundIncomeAdd = tagsUpper.includes('FUND_IN');
     navigateTo('TX_FORM');
   },
 
@@ -2545,9 +2845,29 @@ window.PocketApp = {
     const filteredCats = AppState.categories.filter(c => !c.isArchived && c.type === type);
     const categoryId = AppState._txFormCatId || filteredCats[0]?.id || 1;
 
+    const selWallet = AppState.wallets.find(w => w.id === walletId);
+    const vfMeta = parseWalletVirtualFund(selWallet);
+    const hasFund = vfMeta.hasVirtualFund;
+    const expMode = AppState._txFormFundExpenseMode || 'PERSONAL';
+    const addToFund = !!AppState._txFormFundIncomeAdd;
+    let activeFundTag = '';
+    if (hasFund) {
+      if (type === 'EXPENSE') {
+        if (expMode === 'FUND_BORROW') activeFundTag = 'FUND_BORROW';
+        else if (expMode === 'FUND_EXPENSE') activeFundTag = 'FUND_EXPENSE';
+      } else if (type === 'INCOME' && addToFund) {
+        activeFundTag = 'FUND_IN';
+      }
+    }
+
     if (AppState.editingTx) {
       const idx = AppState.transactions.findIndex(t => t.id === AppState.editingTx.id);
       if (idx >= 0) {
+        const prevTags = String(AppState.transactions[idx].tags || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s && !['FUND_BORROW', 'FUND_EXPENSE', 'FUND_IN'].includes(s.toUpperCase()));
+        if (activeFundTag) prevTags.push(activeFundTag);
         AppState.transactions[idx] = {
           ...AppState.transactions[idx],
           type,
@@ -2557,6 +2877,7 @@ window.PocketApp = {
           date: AppState._txFormDateMs || Date.now(),
           note: (AppState._txFormNote || '').trim(),
           reference: (AppState._txFormRef || '').trim(),
+          tags: prevTags.join(', '),
           attachmentUri: AppState._txFormAttachment || ''
         };
       }
@@ -2572,7 +2893,7 @@ window.PocketApp = {
         date: AppState._txFormDateMs || Date.now(),
         note: (AppState._txFormNote || '').trim(),
         reference: (AppState._txFormRef || '').trim(),
-        tags: '',
+        tags: activeFundTag,
         attachmentUri: AppState._txFormAttachment || ''
       });
 
@@ -2588,11 +2909,16 @@ window.PocketApp = {
           date: AppState._txFormDateMs || Date.now(),
           note: `Fee for ${(AppState._txFormNote || 'transaction').trim()}`,
           reference: (AppState._txFormRef || '').trim(),
-          tags: '',
+          tags: activeFundTag === 'FUND_EXPENSE' ? 'FUND_EXPENSE' : '',
           attachmentUri: ''
         });
       }
-      showSnackbar('Transaction saved.');
+
+      if (activeFundTag === 'FUND_BORROW') {
+        showSnackbar(`Personal borrow recorded from '${selWallet?.name || 'Fund'}'.`);
+      } else {
+        showSnackbar('Transaction saved.');
+      }
     }
 
     saveStateToLocal();
@@ -2687,12 +3013,19 @@ window.PocketApp = {
 
   // Transfer & Adjustment
   openTransferForm() {
+    AppState._trFundMode = 'REGULAR';
     navigateTo('TRANSFER_FORM');
   },
 
   setTransferWallet(which, wId) {
     if (which === 'src') AppState._trSrcId = wId;
     else AppState._trDstId = wId;
+    AppState._trFundMode = 'REGULAR';
+    renderApp();
+  },
+
+  setTransferFundMode(mode) {
+    AppState._trFundMode = mode || 'REGULAR';
     renderApp();
   },
 
@@ -2703,10 +3036,27 @@ window.PocketApp = {
     }
     const amt = parseFloat(document.getElementById('transfer-amount-input')?.value) || 0;
     const fee = parseFloat(document.getElementById('transfer-fee-input')?.value) || 0;
-    const note = (document.getElementById('transfer-note-input')?.value || '').trim();
+    const rawNote = (document.getElementById('transfer-note-input')?.value || '').trim();
     if (amt <= 0) {
       showSnackbar('Enter a transfer amount greater than 0.');
       return;
+    }
+    const srcWallet = AppState.wallets.find(w => w.id === srcId);
+    const dstWallet = AppState.wallets.find(w => w.id === dstId);
+    const isSrcFund = parseWalletVirtualFund(srcWallet).hasVirtualFund;
+    const isDstFund = parseWalletVirtualFund(dstWallet).hasVirtualFund;
+    const fundMode = AppState._trFundMode || 'REGULAR';
+    let finalNote = rawNote;
+    if (isSrcFund && fundMode === 'FUND_TRANSFER') {
+      finalNote = rawNote ? `[FUND_TRANSFER] ${rawNote}` : `[FUND_TRANSFER] Moved fund from ${srcWallet?.name || 'Wallet'} to ${dstWallet?.name || 'Wallet'}`;
+      const dstIdx = AppState.wallets.findIndex(w => w.id === dstId);
+      if (dstIdx >= 0 && !parseWalletVirtualFund(AppState.wallets[dstIdx]).hasVirtualFund) {
+        AppState.wallets[dstIdx] = withWalletVirtualFund(AppState.wallets[dstIdx], true, 0);
+      }
+    } else if (isSrcFund && fundMode === 'BORROW') {
+      finalNote = rawNote ? `[FUND_BORROW] ${rawNote}` : `[FUND_BORROW] Personal borrow from ${srcWallet?.name || 'Fund'}`;
+    } else if (isDstFund && fundMode === 'RETURN') {
+      finalNote = rawNote ? `[FUND_RETURN] ${rawNote}` : `[FUND_RETURN] Returned personal borrow to ${dstWallet?.name || 'Fund'}`;
     }
     AppState.transfers.push({
       id: Date.now(),
@@ -2715,11 +3065,80 @@ window.PocketApp = {
       amount: AccountingEngine.roundCurrency(amt),
       feeAmount: AccountingEngine.roundCurrency(fee),
       date: Date.now(),
-      note
+      note: finalNote
     });
     saveStateToLocal();
     showSnackbar('Transfer recorded.');
     navigateBack();
+  },
+
+  openReturnToFundDialog(fundWalletId) {
+    const derived = computeDerivedData();
+    const fundSummary = derived.walletSummaries.find(ws => ws.wallet.id === fundWalletId) || derived.fundEnabledSummaries[0];
+    if (!fundSummary) return;
+    const allWallets = derived.walletSummaries;
+    const due = Math.max(fundSummary.fundBorrowedDue || 0, derived.totalFundBorrowedDue || 0);
+    const sym = AccountingEngine.currencySymbolForCode(fundSummary.wallet.currency);
+    openModal(`
+      <h3 style="margin:0 0 8px;">${t('Return to Fund')} — ${escHtml(fundSummary.wallet.name)}</h3>
+      <div style="font-size:0.84rem;color:${due > 0.005 ? 'var(--expense-text)' : 'var(--text-secondary)'};font-weight:700;margin-bottom:10px;">
+        ${t('Personal Borrowed Due')}: ${AccountingEngine.formatMoney(due, sym)}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div class="pocket-input-group">
+          <label class="pocket-input-label">${t('Pay From Wallet (Personal Balance)')}</label>
+          <select id="dlg-return-fund-src" class="pocket-input">
+            ${allWallets.map(ws => `<option value="${ws.wallet.id}" ${ws.wallet.id !== fundSummary.wallet.id ? 'selected' : ''}>${escHtml(ws.wallet.name)} (${t('Personal')}: ${AccountingEngine.formatMoney(ws.personalBalance, AccountingEngine.currencySymbolForCode(ws.wallet.currency), false)})</option>`).join('')}
+          </select>
+        </div>
+        <div class="pocket-input-group">
+          <label class="pocket-input-label">${t('Add Returned Money To Fund In')}</label>
+          <select id="dlg-return-fund-dst" class="pocket-input">
+            ${derived.fundEnabledSummaries.map(ws => `<option value="${ws.wallet.id}" ${ws.wallet.id === fundSummary.wallet.id ? 'selected' : ''}>${escHtml(ws.wallet.name)} (${t('Fund')}: ${AccountingEngine.formatMoney(ws.fundBalance, AccountingEngine.currencySymbolForCode(ws.wallet.currency), false)})</option>`).join('')}
+          </select>
+        </div>
+        <div class="pocket-input-group">
+          <label class="pocket-input-label">${t('Return Money')} (${sym})</label>
+          <input id="dlg-return-fund-amt" type="number" step="any" class="pocket-input" value="${due > 0 ? due : ''}" placeholder="0" />
+        </div>
+        <div class="pocket-input-group">
+          <label class="pocket-input-label">${t('Note')} (${t('Optional')})</label>
+          <input id="dlg-return-fund-note" type="text" class="pocket-input" placeholder="e.g. Returned personal borrow" />
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+          <button class="pocket-btn-outlined" onclick="window.PocketApp.closeModal()">${t('Cancel')}</button>
+          <button class="pocket-btn-primary" onclick="window.PocketApp.submitReturnToFund(${fundSummary.wallet.id})">${t('Return Money')}</button>
+        </div>
+      </div>
+    `);
+  },
+
+  submitReturnToFund(defaultFundWalletId) {
+    const srcId = Number(document.getElementById('dlg-return-fund-src')?.value) || 0;
+    const dstId = Number(document.getElementById('dlg-return-fund-dst')?.value) || defaultFundWalletId;
+    const amt = parseFloat(document.getElementById('dlg-return-fund-amt')?.value) || 0;
+    const rawNote = (document.getElementById('dlg-return-fund-note')?.value || '').trim();
+    if (!srcId || amt <= 0) {
+      showSnackbar('Please select a source wallet and enter a positive return amount.');
+      return;
+    }
+    const fundWallet = AppState.wallets.find(w => w.id === dstId);
+    const finalNote = rawNote
+      ? `[FUND_RETURN] ${rawNote}`
+      : `[FUND_RETURN] Returned personal borrow to ${fundWallet?.name || 'Fund'}`;
+    AppState.transfers.push({
+      id: Date.now(),
+      sourceWalletId: srcId,
+      destinationWalletId: dstId,
+      amount: AccountingEngine.roundCurrency(amt),
+      feeAmount: 0,
+      date: Date.now(),
+      note: finalNote
+    });
+    saveStateToLocal();
+    closeModal();
+    renderApp();
+    showSnackbar('Returned to Fund.');
   },
 
   openAdjustForm(wId = null) {
@@ -2774,17 +3193,43 @@ window.PocketApp = {
         return;
       }
     }
+    const vfMeta = parseWalletVirtualFund(existing);
     const icons = ['CASH', 'BANK', 'MTB', 'BRAC', 'BKASH', 'NAGAD', 'ROCKET', 'RAPID_PASS', 'CARD', 'SAVINGS'];
+    const walletTypes = [
+      { value: 'CASH', label: 'Cash' },
+      { value: 'BANK', label: 'Bank' },
+      { value: 'MFS', label: 'MFS (bKash/Nagad)' },
+      { value: 'CARD', label: 'Card' },
+      { value: 'SAVINGS', label: 'Savings' },
+      { value: 'FUND', label: 'Fund (Investment / Project Fund)' },
+      { value: 'CUSTOM', label: 'Custom' }
+    ];
     openModal(`
       <h3 style="margin:0 0 12px;">${existing ? t('Edit Wallet') : t('New Wallet')}</h3>
       <div style="display:flex;flex-direction:column;gap:10px;">
         <div class="pocket-input-group">
           <label class="pocket-input-label">${t('Wallet Name')}</label>
-          <input id="dlg-wallet-name" type="text" class="pocket-input" value="${escHtml(existing?.name || '')}" placeholder="e.g. City Bank / bKash Personal" />
+          <input id="dlg-wallet-name" type="text" class="pocket-input" value="${escHtml(existing?.name || '')}" placeholder="e.g. Cash / City Bank" />
+        </div>
+        <div class="pocket-input-group">
+          <label class="pocket-input-label">${t('Type')}</label>
+          <select id="dlg-wallet-type" class="pocket-input">
+            ${walletTypes.map(wt => `<option value="${wt.value}" ${(existing?.type || 'BANK') === wt.value ? 'selected' : ''}>${t(wt.label)}</option>`).join('')}
+          </select>
         </div>
         <div class="pocket-input-group">
           <label class="pocket-input-label">${t('Opening Balance')}</label>
           <input id="dlg-wallet-opening" type="number" step="any" class="pocket-input" value="${existing?.openingBalance ?? 0}" />
+        </div>
+        <div class="pocket-card-elevated" style="padding:10px;display:flex;flex-direction:column;gap:8px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.86rem;font-weight:700;">
+            <input id="dlg-wallet-vfund-enabled" type="checkbox" ${vfMeta.hasVirtualFund ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--accent-color);" />
+            <span>${t('Virtual Fund Option')}</span>
+          </label>
+          <div class="pocket-input-group">
+            <label class="pocket-input-label">${t('Initial / Opening Fund in this Wallet (৳)')}</label>
+            <input id="dlg-wallet-vfund-opening" type="number" step="any" class="pocket-input" value="${vfMeta.openingFundBalance ?? 0}" placeholder="0" />
+          </div>
         </div>
         <div class="pocket-input-group">
           <label class="pocket-input-label">Currency</label>
@@ -2813,7 +3258,10 @@ window.PocketApp = {
 
   saveWalletDialog(editId) {
     const name = (document.getElementById('dlg-wallet-name')?.value || '').trim();
+    const wType = document.getElementById('dlg-wallet-type')?.value || 'BANK';
     const opening = parseFloat(document.getElementById('dlg-wallet-opening')?.value) || 0;
+    const vfundEnabled = Boolean(document.getElementById('dlg-wallet-vfund-enabled')?.checked) || wType === 'FUND';
+    const vfundOpening = parseFloat(document.getElementById('dlg-wallet-vfund-opening')?.value) || 0;
     const currency = document.getElementById('dlg-wallet-currency')?.value || 'BDT';
     const iconName = document.getElementById('dlg-wallet-icon')?.value || 'BANK';
     const include = Boolean(document.getElementById('dlg-wallet-include')?.checked);
@@ -2824,14 +3272,16 @@ window.PocketApp = {
     if (editId) {
       const idx = AppState.wallets.findIndex(w => w.id === editId);
       if (idx >= 0) {
-        AppState.wallets[idx] = {
+        const updatedBase = {
           ...AppState.wallets[idx],
           name,
+          type: wType,
           openingBalance: AccountingEngine.roundCurrency(opening),
           currency,
           iconName,
           includeInTotalBalance: include
         };
+        AppState.wallets[idx] = withWalletVirtualFund(updatedBase, vfundEnabled, vfundOpening);
       }
     } else {
       const activeWallets = AppState.wallets.filter(w => !w.isArchived);
@@ -2843,10 +3293,10 @@ window.PocketApp = {
         }
         return;
       }
-      AppState.wallets.push({
+      const newBase = {
         id: Date.now(),
         name,
-        type: iconName === 'CARD' ? 'CARD' : 'BANK',
+        type: wType,
         openingBalance: AccountingEngine.roundCurrency(opening),
         includeInTotalBalance: include,
         colorHex: AppState.settings.accentColorHex || '#F15A24',
@@ -2857,7 +3307,8 @@ window.PocketApp = {
         creditLimit: 0,
         statementDay: 0,
         paymentDueDay: 0
-      });
+      };
+      AppState.wallets.push(withWalletVirtualFund(newBase, vfundEnabled, vfundOpening));
     }
     saveStateToLocal();
     closeModal();
@@ -2933,8 +3384,9 @@ window.PocketApp = {
           <input id="dlg-loan-amount" type="number" step="any" class="pocket-input" placeholder="0" />
         </div>
         <div class="pocket-input-group">
-          <label class="pocket-input-label">Wallet</label>
+          <label class="pocket-input-label">${t('Wallet for initial disbursement / receipt')}</label>
           <select id="dlg-loan-wallet" class="pocket-input">
+            <option value="0">${t('No wallet')}</option>
             ${activeWallets.map(w => `<option value="${w.id}">${escHtml(w.name)}</option>`).join('')}
           </select>
         </div>
@@ -2949,8 +3401,8 @@ window.PocketApp = {
           </div>
         </div>
         <div class="pocket-input-group">
-          <label class="pocket-input-label">${t('Note')}</label>
-          <input id="dlg-loan-note" type="text" class="pocket-input" placeholder="Optional note" />
+          <label class="pocket-input-label">${t('Note / Reference')}</label>
+          <input id="dlg-loan-note" type="text" class="pocket-input" placeholder="Optional note or reference" />
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
           <button class="pocket-btn-outlined" onclick="window.PocketApp.closeModal()">${t('Cancel')}</button>
@@ -2964,7 +3416,8 @@ window.PocketApp = {
     const dir = document.getElementById('dlg-loan-dir')?.value || 'LENT';
     const person = (document.getElementById('dlg-loan-person')?.value || '').trim();
     const amt = parseFloat(document.getElementById('dlg-loan-amount')?.value) || 0;
-    const walletId = Number(document.getElementById('dlg-loan-wallet')?.value) || 1;
+    const walletVal = document.getElementById('dlg-loan-wallet')?.value;
+    const walletId = walletVal === '0' ? 0 : (Number(walletVal) || 0);
     const startStr = document.getElementById('dlg-loan-start')?.value;
     const dueStr = document.getElementById('dlg-loan-due')?.value;
     const note = (document.getElementById('dlg-loan-note')?.value || '').trim();
@@ -3037,6 +3490,7 @@ window.PocketApp = {
           <input id="dlg-repay-interest" type="number" step="any" class="pocket-input" placeholder="0" />
           <label class="pocket-input-label">Wallet</label>
           <select id="dlg-repay-wallet" class="pocket-input">
+            <option value="0" ${!s.loan.initialWalletId || Number(s.loan.initialWalletId) <= 0 ? 'selected' : ''}>${t('No wallet')}</option>
             ${activeWallets.map(w => `<option value="${w.id}" ${w.id === s.loan.initialWalletId ? 'selected' : ''}>${escHtml(w.name)}</option>`).join('')}
           </select>
           <button class="pocket-btn-primary" style="margin-top:4px;" onclick="window.PocketApp.submitLoanRepayment(${s.loan.id})">${t('Record Repayment')}</button>
@@ -3052,13 +3506,16 @@ window.PocketApp = {
   submitLoanRepayment(loanId) {
     const p = parseFloat(document.getElementById('dlg-repay-principal')?.value) || 0;
     const interest = parseFloat(document.getElementById('dlg-repay-interest')?.value) || 0;
-    const walletId = Number(document.getElementById('dlg-repay-wallet')?.value) || 1;
+    const walletVal = document.getElementById('dlg-repay-wallet')?.value;
+    const walletId = walletVal === '0' ? 0 : (Number(walletVal) || 0);
     if (p <= 0 && interest <= 0) {
       showSnackbar('Please enter a repayment amount.');
       return;
     }
+    const paymentId = Date.now();
+    const loan = AppState.loans.find(l => l.id === loanId);
     AppState.loanPayments.push({
-      id: Date.now(),
+      id: paymentId,
       loanId,
       walletId,
       principalPortion: AccountingEngine.roundCurrency(p),
@@ -3066,6 +3523,23 @@ window.PocketApp = {
       date: Date.now(),
       note: 'Loan Repayment'
     });
+
+    if (interest > 0 && walletId > 0 && loan) {
+      const isLent = loan.direction === 'LENT';
+      const cat = AppState.categories.find(c => isLent ? c.type === 'INCOME' : c.type === 'EXPENSE') || AppState.categories[0];
+      AppState.transactions.push({
+        id: Date.now() + 1,
+        type: isLent ? 'INCOME' : 'EXPENSE',
+        amount: AccountingEngine.roundCurrency(interest),
+        date: Date.now(),
+        walletId,
+        categoryId: cat ? cat.id : 1,
+        note: isLent ? `Loan interest received from ${loan.personName}` : `Loan interest paid to ${loan.personName}`,
+        reference: `LOAN-${loan.id}`,
+        tags: 'loan-interest'
+      });
+    }
+
     saveStateToLocal();
     closeModal();
     renderApp();
@@ -3075,6 +3549,7 @@ window.PocketApp = {
   deleteLoan(loanId) {
     AppState.loans = AppState.loans.filter(l => l.id !== loanId);
     AppState.loanPayments = AppState.loanPayments.filter(lp => lp.loanId !== loanId);
+    AppState.transactions = AppState.transactions.filter(t => t.reference !== `LOAN-${loanId}`);
     saveStateToLocal();
     closeModal();
     renderApp();
@@ -3217,10 +3692,10 @@ window.PocketApp = {
       <div style="display:flex;flex-direction:column;gap:10px;">
         <input id="dlg-goal-title" type="text" class="pocket-input" placeholder="${t('Goal Title')} (e.g. Emergency Fund)" />
         <input id="dlg-goal-target" type="number" step="any" class="pocket-input" placeholder="${t('Target Amount (৳)')}" />
-        <input id="dlg-goal-saved" type="number" step="any" class="pocket-input" placeholder="${t('Saved So Far (৳)')}" value="0" />
+        <input id="dlg-goal-saved" type="number" step="any" class="pocket-input" placeholder="${t('Saved So Far (৳)')}" />
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
           <button class="pocket-btn-outlined" onclick="window.PocketApp.closeModal()">${t('Cancel')}</button>
-          <button class="pocket-btn-primary" onclick="window.PocketApp.saveSavingsGoal()">${t('Save Goal')}</button>
+          <button class="pocket-btn-primary" onclick="window.PocketApp.saveSavingsGoal()">${t('Save')}</button>
         </div>
       </div>
     `);
@@ -3231,40 +3706,42 @@ window.PocketApp = {
     const target = parseFloat(document.getElementById('dlg-goal-target')?.value) || 0;
     const saved = parseFloat(document.getElementById('dlg-goal-saved')?.value) || 0;
     if (!title || target <= 0) {
-      showSnackbar('Please enter goal title and target amount.');
+      showSnackbar('Please enter title and target amount.');
       return;
     }
     AppState.savingsGoals.push({
       id: Date.now(),
       title,
       targetAmount: AccountingEngine.roundCurrency(target),
-      savedAmount: AccountingEngine.roundCurrency(saved),
+      savedAmount: AccountingEngine.roundCurrency(Math.max(0, saved)),
       colorHex: '#10B981',
       iconName: 'SAVINGS'
     });
     saveStateToLocal();
     closeModal();
     renderApp();
+    showSnackbar('Savings goal created.');
   },
 
-  fundSavingsGoal(goalId) {
+  fundSavingsGoal(goalId, isAdd = true) {
     const g = AppState.savingsGoals.find(x => x.id === goalId);
     if (!g) return;
     openModal(`
-      <h3 style="margin:0 0 10px;">${t('Add Savings')} — ${escHtml(g.title)}</h3>
+      <h3 style="margin:0 0 10px;">${isAdd ? t('Add') : t('Withdraw')} — ${escHtml(g.title)}</h3>
       <input id="dlg-goal-add-amt" type="number" step="any" class="pocket-input" placeholder="Amount (৳)" />
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
         <button class="pocket-btn-outlined" onclick="window.PocketApp.closeModal()">${t('Cancel')}</button>
-        <button class="pocket-btn-primary" onclick="window.PocketApp.confirmFundSavingsGoal(${g.id})">${t('Save')}</button>
+        <button class="pocket-btn-primary" onclick="window.PocketApp.confirmFundSavingsGoal(${g.id}, ${isAdd})">${t('Save')}</button>
       </div>
     `);
   },
 
-  confirmFundSavingsGoal(goalId) {
+  confirmFundSavingsGoal(goalId, isAdd = true) {
     const g = AppState.savingsGoals.find(x => x.id === goalId);
     const amt = parseFloat(document.getElementById('dlg-goal-add-amt')?.value) || 0;
     if (g && amt > 0) {
-      g.savedAmount = AccountingEngine.roundCurrency((g.savedAmount || 0) + amt);
+      const delta = isAdd ? amt : -amt;
+      g.savedAmount = AccountingEngine.roundCurrency(Math.max(0, (g.savedAmount || 0) + delta));
       saveStateToLocal();
     }
     closeModal();

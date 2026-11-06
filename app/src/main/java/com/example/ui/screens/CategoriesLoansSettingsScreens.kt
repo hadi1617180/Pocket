@@ -740,21 +740,29 @@ fun LoansScreen(
             contentPadding = PaddingValues(bottom = 40.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Receivable vs Payable Overview
+            // Unified Receivable vs Payable Overview Card
             item {
-                Row(
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, pocketColors.cardBorder)
                 ) {
-                    Surface(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(16.dp),
-                        color = pocketColors.incomeContainer,
-                        border = BorderStroke(1.dp, pocketColors.incomeText.copy(alpha = 0.35f))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("People owe you", style = MaterialTheme.typography.labelMedium, color = pocketColors.incomeText)
-                            Spacer(modifier = Modifier.height(4.dp))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "People owe you",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = pocketColors.mutedText
+                            )
                             if (uiState.settings.hideBalancesPrivacy) {
                                 Text(
                                     text = "$receivableSymbol ••••",
@@ -773,16 +781,22 @@ fun LoansScreen(
                                 )
                             }
                         }
-                    }
-                    Surface(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(16.dp),
-                        color = pocketColors.loanContainer,
-                        border = BorderStroke(1.dp, pocketColors.loanText.copy(alpha = 0.35f))
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("You owe others", style = MaterialTheme.typography.labelMedium, color = pocketColors.loanText)
-                            Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 14.dp)
+                                .width(1.dp)
+                                .height(38.dp)
+                                .background(pocketColors.cardBorder)
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "You owe others",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = pocketColors.mutedText
+                            )
                             if (uiState.settings.hideBalancesPrivacy) {
                                 Text(
                                     text = "$payableSymbol ••••",
@@ -805,65 +819,78 @@ fun LoansScreen(
                 }
             }
 
-            // View Mode Toggle: By Person (Khata) vs All Records
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = groupByPersonKhata,
-                        onClick = {
-                            performPocketHaptic(view)
-                            groupByPersonKhata = true
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Default.Groups, contentDescription = null, modifier = Modifier.size(16.dp))
-                        },
-                        label = { Text("By Person (Khata)") },
-                        modifier = Modifier
-                            .heightIn(min = 44.dp)
-                            .testTag("loans_khata_mode_chip")
-                    )
-                    FilterChip(
-                        selected = !groupByPersonKhata,
-                        onClick = {
-                            performPocketHaptic(view)
-                            groupByPersonKhata = false
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Default.FormatListBulleted, contentDescription = null, modifier = Modifier.size(16.dp))
-                        },
-                        label = { Text("Individual Loans (${uiState.loanSummaries.size})") },
-                        modifier = Modifier
-                            .heightIn(min = 44.dp)
-                            .testTag("loans_individual_mode_chip")
-                    )
-                }
-            }
-
-            // Filter Chips + Search Bar
+            // Unified Single-Row View Mode + Direction Filter Chips + Search Bar
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = directionFilter == null,
-                            onClick = { directionFilter = null },
-                            label = { Text("All (${uiState.loanSummaries.size})") },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
-                        FilterChip(
-                            selected = directionFilter == LoanDirection.LENT.name,
-                            onClick = { directionFilter = LoanDirection.LENT.name },
-                            label = { Text("Lent (Receivable)") },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
-                        FilterChip(
-                            selected = directionFilter == LoanDirection.BORROWED.name,
-                            onClick = { directionFilter = LoanDirection.BORROWED.name },
-                            label = { Text("Borrowed (Payable)") },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = groupByPersonKhata,
+                                onClick = {
+                                    performPocketHaptic(view)
+                                    groupByPersonKhata = true
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Groups, contentDescription = null, modifier = Modifier.size(16.dp))
+                                },
+                                label = { Text("By Person (Khata)") },
+                                modifier = Modifier
+                                    .heightIn(min = 42.dp)
+                                    .testTag("loans_khata_mode_chip")
+                            )
+                        }
+                        item {
+                            FilterChip(
+                                selected = !groupByPersonKhata,
+                                onClick = {
+                                    performPocketHaptic(view)
+                                    groupByPersonKhata = false
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.FormatListBulleted, contentDescription = null, modifier = Modifier.size(16.dp))
+                                },
+                                label = { Text("Individual Loans (${uiState.loanSummaries.size})") },
+                                modifier = Modifier
+                                    .heightIn(min = 42.dp)
+                                    .testTag("loans_individual_mode_chip")
+                            )
+                        }
+                        item {
+                            VerticalDivider(
+                                modifier = Modifier
+                                    .height(24.dp)
+                                    .padding(horizontal = 2.dp),
+                                color = pocketColors.cardBorder
+                            )
+                        }
+                        item {
+                            FilterChip(
+                                selected = directionFilter == null,
+                                onClick = { directionFilter = null },
+                                label = { Text("All (${uiState.loanSummaries.size})") },
+                                modifier = Modifier.heightIn(min = 42.dp)
+                            )
+                        }
+                        item {
+                            FilterChip(
+                                selected = directionFilter == LoanDirection.LENT.name,
+                                onClick = { directionFilter = LoanDirection.LENT.name },
+                                label = { Text("Lent (Receivable)") },
+                                modifier = Modifier.heightIn(min = 42.dp)
+                            )
+                        }
+                        item {
+                            FilterChip(
+                                selected = directionFilter == LoanDirection.BORROWED.name,
+                                onClick = { directionFilter = LoanDirection.BORROWED.name },
+                                label = { Text("Borrowed (Payable)") },
+                                modifier = Modifier.heightIn(min = 42.dp)
+                            )
+                        }
                     }
                     OutlinedTextField(
                         value = loanSearchQuery,
@@ -964,76 +991,75 @@ fun LoansScreen(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        performPocketHaptic(view)
-                                        val statementText = BackupManager.formatPersonKhataStatementText(khata, khataSym)
-                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_SUBJECT, "Loan Khata Statement - ${khata.personName}")
-                                            putExtra(Intent.EXTRA_TEXT, statementText)
-                                        }
-                                        runCatching {
-                                            context.startActivity(
-                                                Intent.createChooser(shareIntent, "Share ${khata.personName}'s Khata Statement")
-                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            )
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .heightIn(min = 42.dp)
-                                        .testTag("share_khata_statement_button_${khata.personName}"),
-                                    shape = RoundedCornerShape(10.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Share,
-                                        contentDescription = "Share Khata Statement",
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Share Khata Statement",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        performPocketHaptic(view)
-                                        pendingKhataForPdf = khata
-                                        val safeName = khata.personName.replace(Regex("[^\\p{L}\\p{M}\\p{N}_-]"), "_").ifBlank { "Person" }
-                                        exportKhataPdfLauncher.launch("Khata_${safeName}.pdf")
-                                    },
-                                    modifier = Modifier
-                                        .heightIn(min = 42.dp)
-                                        .testTag("export_khata_pdf_button_${khata.personName}"),
-                                    shape = RoundedCornerShape(10.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PictureAsPdf,
-                                        contentDescription = "Save Khata PDF",
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "PDF",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-
                             if (isExpanded) {
                                 Spacer(modifier = Modifier.height(12.dp))
                                 HorizontalDivider(color = pocketColors.cardBorder.copy(alpha = 0.6f))
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            performPocketHaptic(view)
+                                            val statementText = BackupManager.formatPersonKhataStatementText(khata, khataSym)
+                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_SUBJECT, "Loan Khata Statement - ${khata.personName}")
+                                                putExtra(Intent.EXTRA_TEXT, statementText)
+                                            }
+                                            runCatching {
+                                                context.startActivity(
+                                                    Intent.createChooser(shareIntent, "Share ${khata.personName}'s Khata Statement")
+                                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 40.dp)
+                                            .testTag("share_khata_statement_button_${khata.personName}"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = "Share Khata Statement",
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Share Khata Statement",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            performPocketHaptic(view)
+                                            pendingKhataForPdf = khata
+                                            val safeName = khata.personName.replace(Regex("[^\\p{L}\\p{M}\\p{N}_-]"), "_").ifBlank { "Person" }
+                                            exportKhataPdfLauncher.launch("Khata_${safeName}.pdf")
+                                        },
+                                        modifier = Modifier
+                                            .heightIn(min = 40.dp)
+                                            .testTag("export_khata_pdf_button_${khata.personName}"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PictureAsPdf,
+                                            contentDescription = "Save Khata PDF",
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "PDF",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(10.dp))
                                 khata.loans.forEach { summary ->
                                     val isLent = summary.loan.direction == LoanDirection.LENT.name
@@ -1087,6 +1113,13 @@ fun LoansScreen(
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
+                                                if (summary.loan.note.isNotBlank()) {
+                                                    Text(
+                                                        text = "Note: ${summary.loan.note}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
                                             }
                                             OutlinedButton(
                                                 onClick = { selectedLoanForRepayment = summary },
@@ -1216,6 +1249,44 @@ fun LoansScreen(
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(18.dp)
                                     )
+                                }
+                            }
+
+                            if (summary.loan.note.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .testTag("loan_card_note_${summary.loan.id}"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    border = BorderStroke(1.dp, pocketColors.cardBorder.copy(alpha = 0.6f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Description,
+                                            contentDescription = "Note",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Note / Reference",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                text = summary.loan.note,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
@@ -1482,6 +1553,55 @@ fun LoansScreen(
 
                     Text("Wallet for initial disbursement / receipt", style = MaterialTheme.typography.labelMedium)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        item {
+                            val isNoWallet = walletId == 0L
+                            Surface(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { walletId = 0L }
+                                    .testTag("create_loan_wallet_no_wallet"),
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isNoWallet) pocketColors.surfaceSelected else pocketColors.surfaceElevated,
+                                border = BorderStroke(
+                                    1.2.dp,
+                                    if (isNoWallet) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Block,
+                                                contentDescription = "No wallet",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                        }
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "No wallet",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isNoWallet) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Ledger only",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         items(uiState.activeWalletSummaries, key = { it.wallet.id }) { ws ->
                             val isSelected = walletId == ws.wallet.id
                             Surface(
@@ -1545,13 +1665,13 @@ fun LoansScreen(
                 Button(
                     onClick = {
                         val p = principalText.toDoubleOrNull() ?: 0.0
-                        if (personName.isNotBlank() && p > 0.0 && walletId != 0L) {
+                        if (personName.isNotBlank() && p > 0.0) {
                             viewModel.createLoan(
                                 LoanEntity(
                                     personName = personName.trim(),
                                     direction = direction.name,
                                     principalAmount = AccountingEngine.roundCurrency(p),
-                                    initialWalletId = walletId,
+                                    initialWalletId = if (walletId > 0L) walletId else null,
                                     startDate = loanStartDateMillis,
                                     dueDate = dueDateMillis,
                                     note = noteText.trim(),
@@ -1645,10 +1765,11 @@ fun LoansScreen(
                 ?: symbol
         }
         val repaymentWalletSymbol = remember(repaymentWalletId, uiState.wallets, loanSymbol) {
-            uiState.wallets.firstOrNull { it.id == repaymentWalletId }
-                ?.currency?.takeIf { it.isNotBlank() }
-                ?.let { AccountingEngine.currencySymbolForCode(it) }
-                ?: loanSymbol
+            (repaymentWalletId?.let { wId ->
+                uiState.wallets.firstOrNull { it.id == wId }
+                    ?.currency?.takeIf { it.isNotBlank() }
+                    ?.let { AccountingEngine.currencySymbolForCode(it) }
+            }) ?: loanSymbol
         }
 
         AlertDialog(
@@ -1771,6 +1892,14 @@ fun LoansScreen(
                                 .clearZeroOnFocus(interestPortionText) { interestPortionText = it }
                         )
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item {
+                                FilterChip(
+                                    selected = repaymentWalletId == null || repaymentWalletId == 0L,
+                                    onClick = { repaymentWalletId = null },
+                                    label = { Text("No wallet") },
+                                    modifier = Modifier.testTag("repayment_no_wallet_chip")
+                                )
+                            }
                             items(uiState.activeWalletSummaries, key = { it.wallet.id }) { ws ->
                                 FilterChip(
                                     selected = repaymentWalletId == ws.wallet.id,
@@ -1800,10 +1929,11 @@ fun LoansScreen(
                     Text("Activity Ledger (${liveSummary.activities.size})", style = MaterialTheme.typography.labelLarge)
                     liveSummary.activities.forEach { act ->
                         val actDateText = remember(act.date) { formatRelativeDate(act.date) }
-                        val actSymbol = uiState.wallets.firstOrNull { it.id == act.walletId }
-                            ?.currency?.takeIf { it.isNotBlank() }
-                            ?.let { AccountingEngine.currencySymbolForCode(it) }
-                            ?: loanSymbol
+                        val actSymbol = (act.walletId?.let { wId ->
+                            uiState.wallets.firstOrNull { it.id == wId }
+                                ?.currency?.takeIf { it.isNotBlank() }
+                                ?.let { AccountingEngine.currencySymbolForCode(it) }
+                        }) ?: loanSymbol
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1848,7 +1978,7 @@ fun LoansScreen(
                                         activityType = LoanActivityType.REPAYMENT.name,
                                         principalPortion = AccountingEngine.roundCurrency(prin.coerceAtLeast(0.0)),
                                         interestPortion = AccountingEngine.roundCurrency(intr),
-                                        walletId = repaymentWalletId,
+                                        walletId = repaymentWalletId?.takeIf { it > 0L },
                                         date = System.currentTimeMillis(),
                                         note = repaymentNote.trim()
                                     )
@@ -2145,54 +2275,119 @@ fun SettingsScreen(
                 )
             }
 
-            // iii. Financial Modules
+            // iii. Financial Modules (Grouped minimalist card list)
             item {
                 Text("Financial Modules", style = MaterialTheme.typography.titleMedium)
             }
             item {
-                SettingsNavCard(
-                    icon = Icons.Default.Category,
-                    title = "Categories",
-                    subtitle = null,
-                    testTag = "settings_nav_categories",
-                    onClick = { viewModel.navigateTo(PocketScreen.CategoriesManagement) }
-                )
-            }
-            item {
-                SettingsNavCard(
-                    icon = Icons.Default.EventRepeat,
-                    title = "Recurring Bills",
-                    subtitle = null,
-                    testTag = "settings_nav_recurring",
-                    onClick = { viewModel.navigateTo(PocketScreen.RecurringManagement) }
-                )
-            }
-            item {
-                SettingsNavCard(
-                    icon = Icons.Default.Widgets,
-                    title = "Widgets",
-                    subtitle = null,
-                    testTag = "settings_nav_widgets",
-                    onClick = { viewModel.navigateTo(PocketScreen.WidgetConfig) }
-                )
-            }
-            item {
-                SettingsNavCard(
-                    icon = Icons.AutoMirrored.Filled.ReceiptLong,
-                    title = "Monthly Statement",
-                    subtitle = null,
-                    testTag = "settings_nav_statement",
-                    onClick = { viewModel.navigateTo(PocketScreen.MonthlyStatement()) }
-                )
-            }
-            item {
-                SettingsNavCard(
-                    icon = Icons.Default.Backup,
-                    title = "Backup",
-                    subtitle = null,
-                    testTag = "settings_nav_backup",
-                    onClick = { viewModel.navigateTo(PocketScreen.BackupRestore) }
-                )
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, pocketColors.cardBorder)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        SettingsGroupedRow(
+                            icon = Icons.Default.Category,
+                            title = "Categories",
+                            testTag = "settings_nav_categories",
+                            onClick = { viewModel.navigateTo(PocketScreen.CategoriesManagement) }
+                        )
+                        HorizontalDivider(
+                            color = pocketColors.cardBorder,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        SettingsGroupedRow(
+                            icon = Icons.Default.EventRepeat,
+                            title = "Recurring Bills",
+                            testTag = "settings_nav_recurring",
+                            onClick = { viewModel.navigateTo(PocketScreen.RecurringManagement) }
+                        )
+                        HorizontalDivider(
+                            color = pocketColors.cardBorder,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        // Enable Fund Feature (Paid feature: click text to open Fund Guide page, toggle switch on right)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.navigateTo(PocketScreen.FundFeatureGuide) }
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                                .testTag("settings_nav_fund_guide"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.BusinessCenter,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Enable Fund Feature",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                if (!uiState.isSubscriptionActive) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+                                    ) {
+                                        Text(
+                                            text = "PRO",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Switch(
+                                checked = uiState.isFundEnabled,
+                                onCheckedChange = { checked ->
+                                    performPocketHaptic(view)
+                                    viewModel.setFundFeatureEnabled(checked)
+                                },
+                                modifier = Modifier.testTag("settings_fund_feature_switch")
+                            )
+                        }
+                        HorizontalDivider(
+                            color = pocketColors.cardBorder,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        SettingsGroupedRow(
+                            icon = Icons.Default.Widgets,
+                            title = "Widgets",
+                            testTag = "settings_nav_widgets",
+                            onClick = { viewModel.navigateTo(PocketScreen.WidgetConfig) }
+                        )
+                        HorizontalDivider(
+                            color = pocketColors.cardBorder,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        SettingsGroupedRow(
+                            icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                            title = "Monthly Statement",
+                            testTag = "settings_nav_statement",
+                            onClick = { viewModel.navigateTo(PocketScreen.MonthlyStatement()) }
+                        )
+                        HorizontalDivider(
+                            color = pocketColors.cardBorder,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        SettingsGroupedRow(
+                            icon = Icons.Default.Backup,
+                            title = "Backup",
+                            testTag = "settings_nav_backup",
+                            onClick = { viewModel.navigateTo(PocketScreen.BackupRestore) }
+                        )
+                    }
+                }
             }
 
             // iv. Preferences
@@ -2526,7 +2721,7 @@ fun SettingsScreen(
 
                         // Box Color (2 free presets + 3 paid presets + 1 paid custom color picker) & Box Opacity slider (free)
                         val boxColorPresets = listOf(
-                            "#141416" to "Carbon",
+                            "#2A2A2A" to "Carbon",
                             "#1E293B" to "Slate",
                             "#172554" to "Midnight",
                             "#14532D" to "Emerald",
@@ -2534,7 +2729,7 @@ fun SettingsScreen(
                         )
                         val currentBoxHex = settings.boxColorHex.trim()
                         val effectiveBoxHex = currentBoxHex.ifBlank {
-                            if (settings.themeMode.equals("LIGHT", ignoreCase = true)) "#FFFFFF" else "#141416"
+                            if (settings.themeMode.equals("LIGHT", ignoreCase = true)) "#FFFFFF" else "#2A2A2A"
                         }
                         val isCustomBoxColor = currentBoxHex.isNotBlank() &&
                             boxColorPresets.none { it.first.equals(currentBoxHex, ignoreCase = true) }
@@ -2549,11 +2744,11 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold
                             )
-                            if (currentBoxHex.isNotBlank()) {
+                            if (currentBoxHex.isNotBlank() && !currentBoxHex.equals("#2A2A2A", ignoreCase = true)) {
                                 TextButton(
                                     onClick = {
                                         performPocketHaptic(view)
-                                        viewModel.updateBoxColor("")
+                                        viewModel.updateBoxColor("#2A2A2A")
                                     },
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                                     modifier = Modifier
@@ -3774,6 +3969,43 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun SettingsGroupedRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String? = null,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            if (!subtitle.isNullOrBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
 private fun SettingsNavCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
@@ -3815,6 +4047,180 @@ private fun SettingsNavCard(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+fun FundFeatureGuideScreen(
+    uiState: PocketUiState,
+    viewModel: PocketViewModel
+) {
+    val pocketColors = LocalPocketColors.current
+    val view = LocalView.current
+    val isBn = uiState.settings.appLanguage.equals("BN", ignoreCase = true)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Transparent)
+    ) {
+        PocketTopBar(
+            title = "Fund",
+            onBack = { viewModel.navigateBack() },
+            actions = {
+                if (!uiState.isSubscriptionActive) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Text(
+                            text = "PRO",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Switch(
+                    checked = uiState.isFundEnabled,
+                    onCheckedChange = { checked ->
+                        performPocketHaptic(view)
+                        viewModel.setFundFeatureEnabled(checked)
+                    },
+                    modifier = Modifier.testTag("fund_guide_top_switch")
+                )
+            }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, pocketColors.cardBorder)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = if (isBn) {
+                                "ফান্ড (Fund) ফিচারটি কীভাবে কাজ করে?"
+                            } else {
+                                "How the Fund System Works"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = if (isBn) {
+                                "অফিস, প্রজেক্ট বা ব্যবসার ফান্ডের টাকা নিজের ব্যক্তিগত পকেটের ক্যাশ ও ডিজিটাল ওয়ালেট (বিকাশ/ব্যাংক) থেকে আলাদা ও নির্ভুলভাবে হিসাব রাখার জন্য এই ফিচারটি তৈরি করা হয়েছে।\n\nএটি অফ (Off) থাকলে অ্যাপের ভেতর থেকে ফান্ডের সব অপশন লুকানো থাকবে। অন (On) করলেই ফান্ডের সব সুবিধা দেখা যাবে।"
+                            } else {
+                                "The Fund system lets you manage office, project, or business fund money across your wallets while keeping your actual pocket Cash and personal balances strictly separated.\n\nWhen turned OFF, all Fund options are hidden across the app for a clean personal finance view. Turn it ON anytime to access Fund tracking."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, pocketColors.cardBorder)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = if (isBn) "ধাপে ধাপে ব্যবহারের নিয়ম (Instructions)" else "Step-by-Step Instructions",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Text(
+                            text = if (isBn) {
+                                "১. আলাদা Fund ওয়ালেট ও পকেটের আসল ক্যাশ:\n• নগদ ফান্ডের টাকা পকেটের সাধারণ Cash ওয়ালেটের সাথে না মিলিয়ে আলাদা 'Fund' ওয়ালেটে রাখুন। এতে আপনার পকেটে আসল কত টাকা আছে তা সবসময় 'Cash' ওয়ালেটে সঠিক দেখাবে, আর পুরো ফান্ডের হিসাব 'Fund' কার্ডে থাকবে।\n\n" +
+                                    "২. ফান্ডে টাকা জমা (Add Income → Add to Fund):\n• যেকোনো ওয়ালেটে ফান্ডের টাকা আসলে Add Income-এ গিয়ে Destination Wallet-এর ডানপাশে 'Add to Fund' টগলটি অন করে সেভ করুন।\n\n" +
+                                    "৩. ফান্ড থেকে খরচ বা ধার (Add Expense):\n• Add Expense-এ গিয়ে Destination Wallet-এর ডানপাশের ড্রপডাউন থেকে বেছে নিন:\n" +
+                                    "  – Personal: আপনার ব্যক্তিগত টাকা থেকে খরচ হবে (ফান্ড অক্ষত থাকবে)।\n" +
+                                    "  – Fund Expense: অফিস বা প্রজেক্টের কাজে খরচ হলে মোট ফান্ড ও ওই ওয়ালেট থেকে কাটবে।\n" +
+                                    "  – Borrow from fund: ফান্ডের টাকা জরুরি ব্যক্তিগত কাজে খরচ করলে তা ফান্ড থেকে কমবে এবং 'Borrowed Due' হিসেবে জমা থাকবে যা পরে ফেরত দিতে পারবেন।\n\n" +
+                                    "৪. এক ওয়ালেট থেকে অন্য ওয়ালেটে ফান্ড ট্রান্সফার ও ফেরত (Transfer):\n• নগদ ফান্ড থেকে বিকাশ বা ব্যাংকে টাকা নিলে Transfer-এ গিয়ে 'Keep as Fund' সিলেক্ট করুন।\n" +
+                                    "• ব্যক্তিগত কাজে ধার নেওয়া টাকা ফেরত দিতে 'Return to Fund' ব্যবহার করুন।"
+                            } else {
+                                "1. Separate Fund Wallet & Actual Pocket Cash:\n• Keep physical cash funds in the dedicated 'Fund' wallet so your 'Cash' wallet always shows only the actual personal cash in your pocket.\n\n" +
+                                    "2. Receiving Fund Money (Add Income → Add to Fund):\n• In Add Income, turn ON the 'Add to Fund' toggle next to Destination Wallet to add incoming money directly to your Fund.\n\n" +
+                                    "3. Spending or Borrowing from Fund (Add Expense):\n• Use the dropdown next to Destination Wallet in Add Expense:\n" +
+                                    "  – Personal: Deducts from your personal money; Fund stays untouched.\n" +
+                                    "  – Fund Expense: Official/project expense deducted from both the wallet and Total Fund.\n" +
+                                    "  – Borrow from fund: Personal spend using Fund money; tracked automatically as 'Borrowed Due' so you can return it later.\n\n" +
+                                    "4. Moving Fund Between Wallets & Returning Borrowed Money (Transfer):\n• When moving Fund money from Cash to bKash or Bank, choose 'Keep as Fund'.\n" +
+                                    "• To repay money you borrowed from the Fund, use 'Return to Fund'."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = if (isBn) "বাস্তব উদাহরণ (Real-Life Example)" else "Real-Life Example",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = if (isBn) {
+                                "ধরুন, আপনার পকেটে ব্যক্তিগত ৫,০০০ টাকা ক্যাশ আছে এবং অফিসের কাজের জন্য আপনি ৪,০০,০০০ টাকা ফান্ড পেলেন:\n\n" +
+                                    "• আপনি ৪,০০,০০০ টাকা 'Fund' ওয়ালেটে রাখলেন। ফলে আপনার 'Cash' ওয়ালেটে পকেটের ৫,০০০ টাকাই দেখাবে, আর 'Total Available Balance'-এ ৪,০৫,০০০ টাকা থাকবে।\n" +
+                                    "• এরপর ফান্ড থেকে ৫০,০০০ টাকা বিকাশে নিলেন ('Keep as Fund')। এখন বিকাশের ভেতরেই ৫০,০০০ টাকা ফান্ড হিসেবে ট্র্যাক হবে।\n" +
+                                    "• বিকাশ বা নগদ ফান্ড থেকে অফিসের কাজে ১০,০০০ টাকা খরচ করলে 'Fund Expense' দেবেন—মোট ফান্ড কমে ৩,৯০,০০০ টাকা হবে।\n" +
+                                    "• নিজের ব্যক্তিগত কাজে ফান্ড থেকে ২,০০০ টাকা খরচ করলে 'Borrow from fund' দেবেন—ফান্ড কার্ডে 'Borrowed Due: ৳2,000' দেখাবে। পরে নিজের টাকা থেকে 'Return to Fund' করলেই বকেয়া ০ হয়ে ফান্ড আবার পূর্ণ হয়ে যাবে!"
+                            } else {
+                                "Suppose you have ৳5,000 personal Cash in your pocket and receive ৳4,00,000 in cash as an office fund:\n\n" +
+                                    "• Add ৳4,00,000 to your 'Fund' wallet. Your 'Cash' wallet continues to show ৳5,000 (your real pocket money), while Total Available Balance shows ৳4,05,000.\n" +
+                                    "• Transfer ৳50,000 from Fund to bKash using 'Keep as Fund'. Now bKash holds ৳50,000 of your Fund alongside your personal bKash balance.\n" +
+                                    "• Spend ৳10,000 for office work from bKash or Fund using 'Fund Expense' — Total Fund becomes ৳3,90,000.\n" +
+                                    "• Spend ৳2,000 for personal use using 'Borrow from fund' — it records 'Borrowed Due: ৳2,000'. When you repay it via 'Return to Fund', the due clears to 0 and your Fund balance is restored!"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -4809,7 +5215,7 @@ fun RecurringTransactionsScreen(
                 TextButton(
                     onClick = {
                         if (!canAddRec) {
-                            viewModel.showUpgradeDialog("Free tier allows up to 2 recurring bills. Upgrade to Pocket Premium for unlimited recurring bills and subscriptions.")
+                            viewModel.showUpgradeDialog("Free tier allows up to 3 recurring bills. Upgrade to Pocket Premium for unlimited recurring bills and subscriptions.")
                         } else {
                             editingRecurring = null
                             showAddOrEditDialog = true

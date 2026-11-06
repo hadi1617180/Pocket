@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan to fix the Firestore 'Missing or insufficient permissions' Google Sign-In error on the Web app by aligning the Web sync layer with Android's subcollection schema, updating Firestore security rules, and providing an end-to-end code protection strategy (Private repo, R8 ProGuard obfuscation, and backend license verification).",
-  "updatedAt": "2026-11-02T20:30:43.417502085Z",
+  "summary": "Implementation plan covering the 4 bug/loophole fixes (Wallets current-month budget calculation, current-month Report navigation sync, Wallet Detail Personal/Fund balance display + Return to Fund action + isFundEnabled guard, and One-Tap Adjust dialog on adjustment history edit) along with the 2 approved Loans (Khata) minimalistic UI improvements (single-row filter bar and moving Share/PDF buttons inside expanded Khata cards).",
+  "updatedAt": "2026-11-06T19:12:59.682649106Z",
   "requestFeedback": true,
   "userFacing": true
 }

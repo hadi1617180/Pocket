@@ -80,6 +80,41 @@ export const DEFAULT_SETTINGS = {
   activatedCode: ''
 };
 
+export const VIRTUAL_FUND_WALLET_ID = -999;
+export const VFUND_HINT_REGEX = /\[VFUND:(1|0):(-?[0-9]+(?:\.[0-9]+)?)]/;
+
+export function isDedicatedFundWallet(wallet) {
+  return String(wallet?.type || '').toUpperCase() === 'FUND' ||
+    String(wallet?.name || '').trim().toLowerCase() === 'fund';
+}
+
+export function parseWalletVirtualFund(wallet) {
+  const hint = String(wallet?.accountHint || '');
+  const m = hint.match(VFUND_HINT_REGEX);
+  const isFundW = isDedicatedFundWallet(wallet);
+  const hasVirtualFund = isFundW ? true : (m ? m[1] === '1' : Boolean(wallet?.hasVirtualFund));
+  const openingFundBalance = isFundW
+    ? Math.max(0, parseFloat(wallet?.openingBalance) || 0)
+    : (m
+      ? (parseFloat(m[2]) || 0)
+      : (wallet?.openingFundBalance !== undefined ? (parseFloat(wallet.openingFundBalance) || 0) : 0));
+  const cleanAccountHint = hint.replace(VFUND_HINT_REGEX, '').trim();
+  return { hasVirtualFund, openingFundBalance, cleanAccountHint, isFundWallet: isFundW };
+}
+
+export function withWalletVirtualFund(wallet, enabled, openingFund = 0) {
+  const { cleanAccountHint } = parseWalletVirtualFund(wallet);
+  const roundedFund = Math.round((Number(openingFund) || 0) * 100) / 100;
+  const tag = `[VFUND:${enabled ? '1' : '0'}:${roundedFund}]`;
+  const nextHint = cleanAccountHint ? `${cleanAccountHint} ${tag}` : tag;
+  return {
+    ...wallet,
+    accountHint: nextHint,
+    hasVirtualFund: Boolean(enabled),
+    openingFundBalance: enabled ? roundedFund : 0
+  };
+}
+
 export const AccountingEngine = {
   roundCurrency(value) {
     const n = Number(value) || 0;
@@ -120,31 +155,80 @@ export const AccountingEngine = {
 
   calculateWalletSummary(wallet, transactions, transfers, loans, loanPayments, adjustments) {
     const wId = Number(wallet.id);
+    const vfMeta = parseWalletVirtualFund(wallet);
+    const isLegacyFundWallet = vfMeta.isFundWallet;
+
     let incomeTotal = 0;
     let expenseTotal = 0;
     let expenseReversalTotal = 0;
+    let fundIncomeIn = 0;
+    let fundOfficialSpentRaw = 0;
+    let fundBorrowedOut = 0;
+    let fundReturnedIn = 0;
+    let fundTransferIn = 0;
+    let fundTransferOut = 0;
 
     for (const tx of transactions) {
       if (Number(tx.walletId) !== wId) continue;
       const amt = Number(tx.amount) || 0;
-      if (tx.type === 'INCOME') incomeTotal += amt;
-      else if (tx.type === 'EXPENSE') expenseTotal += amt;
-      else if (tx.type === 'EXPENSE_REVERSAL') expenseReversalTotal += amt;
+      const tagsUpper = String(tx.tags || '').toUpperCase();
+      if (tx.type === 'INCOME') {
+        incomeTotal += amt;
+        if (tagsUpper.includes('FUND_IN') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
+          fundIncomeIn += amt;
+        }
+      } else if (tx.type === 'EXPENSE') {
+        expenseTotal += amt;
+        if (tagsUpper.includes('FUND_BORROW')) {
+          fundBorrowedOut += amt;
+        } else if (tagsUpper.includes('FUND_EXPENSE') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
+          fundOfficialSpentRaw += amt;
+        }
+      } else if (tx.type === 'EXPENSE_REVERSAL') {
+        expenseReversalTotal += amt;
+        if (tagsUpper.includes('FUND_EXPENSE') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
+          fundOfficialSpentRaw -= amt;
+        }
+      }
     }
 
     let transfersIn = 0;
     let transfersOut = 0;
     let transferFees = 0;
     for (const tr of transfers) {
+      const noteUpper = String(tr.note || '').toUpperCase();
+      const isSameWalletInternal = Number(tr.sourceWalletId) === wId && Number(tr.destinationWalletId) === wId;
+      const srcAmt = Number(tr.amount ?? tr.principalAmount) || 0;
+      const destAmt = tr.destinationAmount !== null && tr.destinationAmount !== undefined && Number(tr.destinationAmount) > 0
+        ? Number(tr.destinationAmount)
+        : srcAmt;
+      const trFee = Number(tr.feeAmount) || 0;
+
+      if (isSameWalletInternal) {
+        if (noteUpper.includes('[FUND_RETURN]')) {
+          fundReturnedIn += destAmt;
+        } else if (noteUpper.includes('[FUND_BORROW]')) {
+          fundBorrowedOut += srcAmt;
+        }
+        continue;
+      }
+
       if (Number(tr.destinationWalletId) === wId) {
-        const destAmt = tr.destinationAmount !== null && tr.destinationAmount !== undefined
-          ? Number(tr.destinationAmount)
-          : Number(tr.amount) || 0;
         transfersIn += destAmt;
+        if (noteUpper.includes('[FUND_RETURN]')) {
+          fundReturnedIn += destAmt;
+        } else if (noteUpper.includes('[FUND_TRANSFER]') || isLegacyFundWallet) {
+          fundTransferIn += destAmt;
+        }
       }
       if (Number(tr.sourceWalletId) === wId) {
-        transfersOut += Number(tr.amount) || 0;
-        transferFees += Number(tr.feeAmount) || 0;
+        transfersOut += srcAmt;
+        transferFees += trFee;
+        if (noteUpper.includes('[FUND_BORROW]')) {
+          fundBorrowedOut += srcAmt;
+        } else if (noteUpper.includes('[FUND_TRANSFER]') || isLegacyFundWallet) {
+          fundTransferOut += srcAmt + trFee;
+        }
       }
     }
 
@@ -162,6 +246,7 @@ export const AccountingEngine = {
     let loanRepaymentsPaidOut = 0;
     for (const lp of loanPayments) {
       if (Number(lp.walletId) !== wId) continue;
+      if (lp.activityType && lp.activityType !== 'REPAYMENT') continue;
       const parentLoan = loanMap.get(Number(lp.loanId));
       if (!parentLoan) continue;
       const totalPayment = (Number(lp.principalPortion) || 0) + (Number(lp.interestPortion) || 0);
@@ -191,8 +276,33 @@ export const AccountingEngine = {
       loanRepaymentsPaidOut +
       manualAdjustmentsNet;
 
+    const currentBalance = this.roundCurrency(rawBalance);
+    const hasFundActivity =
+      isLegacyFundWallet ||
+      fundIncomeIn > 0.004 ||
+      Math.abs(fundOfficialSpentRaw) > 0.004 ||
+      fundBorrowedOut > 0.004 ||
+      fundReturnedIn > 0.004 ||
+      fundTransferIn > 0.004 ||
+      fundTransferOut > 0.004;
+    const hasVirtualFund = vfMeta.hasVirtualFund || hasFundActivity;
+    const openingFund = hasVirtualFund ? this.roundCurrency(vfMeta.openingFundBalance) : 0;
+    const fundOfficialSpent = this.roundCurrency(Math.max(0, fundOfficialSpentRaw));
+    const fundBorrowedDue = this.roundCurrency(Math.max(0, fundBorrowedOut - fundReturnedIn));
+    const rawFundBalance = isLegacyFundWallet
+      ? currentBalance
+      : (hasVirtualFund
+        ? (openingFund + fundIncomeIn + fundTransferIn + fundReturnedIn - fundOfficialSpent - fundBorrowedOut - fundTransferOut)
+        : 0);
+    const fundBalance = hasVirtualFund ? this.roundCurrency(rawFundBalance) : 0;
+    const personalBalance = hasVirtualFund ? this.roundCurrency(currentBalance - fundBalance) : currentBalance;
+
     return {
-      wallet,
+      wallet: {
+        ...wallet,
+        hasVirtualFund,
+        openingFundBalance: openingFund
+      },
       openingBalance: this.roundCurrency(opening),
       incomeTotal: this.roundCurrency(incomeTotal),
       expenseTotal: this.roundCurrency(expenseTotal),
@@ -205,7 +315,18 @@ export const AccountingEngine = {
       loanRepaymentsReceivedIn: this.roundCurrency(loanRepaymentsReceivedIn),
       loanRepaymentsPaidOut: this.roundCurrency(loanRepaymentsPaidOut),
       manualAdjustmentsNet: this.roundCurrency(manualAdjustmentsNet),
-      currentBalance: this.roundCurrency(rawBalance)
+      currentBalance,
+      hasVirtualFund,
+      openingFundBalance: openingFund,
+      fundIncomeIn: this.roundCurrency(fundIncomeIn),
+      fundTransferIn: this.roundCurrency(fundTransferIn),
+      fundTransferOut: this.roundCurrency(fundTransferOut),
+      fundOfficialSpent,
+      fundBalance,
+      personalBalance,
+      fundBorrowedDue,
+      fundBorrowedTotal: this.roundCurrency(fundBorrowedOut),
+      fundReturnedTotal: this.roundCurrency(fundReturnedIn)
     };
   },
 
@@ -223,24 +344,40 @@ export const AccountingEngine = {
       .sort((a, b) => (Number(b.startDate) || 0) - (Number(a.startDate) || 0))
       .map(loan => {
         const payments = (paymentsByLoan.get(Number(loan.id)) || [])
-          .slice()
-          .sort((a, b) => (Number(b.date) || 0) - (Number(a.date) || 0));
-        const principalRepaid = this.roundCurrency(
-          payments.reduce((sum, p) => sum + (Number(p.principalPortion) || 0), 0)
-        );
-        const interestTotal = this.roundCurrency(
-          payments.reduce((sum, p) => sum + (Number(p.interestPortion) || 0), 0)
-        );
-        const orig = this.roundCurrency(loan.principalAmount);
-        const rawOutstanding = this.roundCurrency(orig - principalRepaid);
+        let totalDisbursed = 0;
+        let totalAdditions = 0;
+        let principalRepaid = 0;
+        let interestTotal = 0;
+
+        for (const p of payments) {
+          const type = p.activityType || 'REPAYMENT';
+          const pPortion = Number(p.principalPortion) || 0;
+          const iPortion = Number(p.interestPortion) || 0;
+          if (type === 'DISBURSEMENT') {
+            totalDisbursed += pPortion;
+          } else if (type === 'ADJUSTMENT') {
+            totalAdditions += pPortion;
+          } else {
+            principalRepaid += pPortion;
+            interestTotal += iPortion;
+          }
+        }
+        principalRepaid = this.roundCurrency(principalRepaid);
+        interestTotal = this.roundCurrency(interestTotal);
+
+        const basePrincipal = totalDisbursed > 0 ? totalDisbursed : (Number(loan.principalAmount) || 0);
+        const orig = this.roundCurrency(basePrincipal);
+        const rawOutstanding = this.roundCurrency(orig + totalAdditions - principalRepaid);
         const outstandingPrincipal = Math.max(0, rawOutstanding);
         const isSettled = outstandingPrincipal <= 0.004;
         const isOverdue = !isSettled && loan.dueDate && Number(loan.dueDate) < nowMillis;
         const status = isSettled ? 'SETTLED' : isOverdue ? 'OVERDUE' : 'ACTIVE';
-        const w = walletMap.get(Number(loan.initialWalletId));
+        const initialWId = Number(loan.initialWalletId) || 0;
+        const w = initialWId > 0 ? walletMap.get(initialWId) : null;
+        const walletName = initialWId <= 0 ? 'No wallet' : (w ? w.name : 'No wallet');
         return {
           loan,
-          walletName: w ? w.name : 'Wallet',
+          walletName,
           originalPrincipal: orig,
           principalRepaid,
           interestPaidOrReceived: interestTotal,
@@ -307,20 +444,25 @@ export const AccountingEngine = {
       const cat = catMap.get(Number(tx.categoryId));
       const isIncome = tx.type === 'INCOME';
       const isReversal = tx.type === 'EXPENSE_REVERSAL';
+      const tagsUpper = String(tx.tags || '').toUpperCase();
+      const isFundBorrow = tagsUpper.includes('FUND_BORROW');
+      const isFundExpense = tagsUpper.includes('FUND_EXPENSE');
+      const isFundIn = tagsUpper.includes('FUND_IN');
+      const fundTagSuffix = isFundBorrow ? ' • Personal Borrow' : isFundExpense ? ' • Fund Expense' : isFundIn ? ' • Added to Fund' : '';
       entries.push({
         uniqueKey: `TX_${tx.id}`,
         entityId: tx.id,
         kind: isIncome ? 'INCOME' : isReversal ? 'EXPENSE_REVERSAL' : 'EXPENSE',
         date: Number(tx.date) || Date.now(),
         title: cat ? cat.name : (isIncome ? 'Income' : 'Expense'),
-        subtitle: `${w ? w.name : 'Wallet'}${tx.note ? ' • ' + tx.note : ''}`,
+        subtitle: `${w ? w.name : 'Wallet'}${tx.note ? ' • ' + tx.note : ''}${fundTagSuffix}`,
         walletId: Number(tx.walletId),
         secondaryWalletId: null,
         categoryId: tx.categoryId ? Number(tx.categoryId) : null,
         signedAmountText: `${isIncome || isReversal ? '+' : '−'}${this.formatAmount(tx.amount, this.currencySymbolForCode(w?.currency))}`,
         rawAmount: this.roundCurrency(tx.amount),
         isPositiveFlow: isIncome || isReversal,
-        badgeLabel: isIncome ? 'INCOME' : isReversal ? 'REFUND' : 'EXPENSE',
+        badgeLabel: isFundBorrow ? 'PERSONAL BORROW' : isFundExpense ? 'FUND EXPENSE' : isFundIn ? 'FUND IN' : (isIncome ? 'INCOME' : isReversal ? 'REFUND' : 'EXPENSE'),
         reference: tx.reference || '',
         tags: tx.tags || '',
         attachmentUri: tx.attachmentUri || '',
@@ -333,20 +475,33 @@ export const AccountingEngine = {
     for (const tr of transfers) {
       const srcW = walletMap.get(Number(tr.sourceWalletId));
       const dstW = walletMap.get(Number(tr.destinationWalletId));
+      const noteUpper = String(tr.note || '').toUpperCase();
+      const isBorrowTr = noteUpper.includes('[FUND_BORROW]');
+      const isReturnTr = noteUpper.includes('[FUND_RETURN]');
+      const isFundTr = noteUpper.includes('[FUND_TRANSFER]');
+      const cleanNote = String(tr.note || '')
+        .replace(/\[FUND_BORROW\]/gi, '')
+        .replace(/\[FUND_RETURN\]/gi, '')
+        .replace(/\[FUND_TRANSFER\]/gi, '')
+        .trim();
+      const trAmt = Number(tr.amount ?? tr.principalAmount) || 0;
+      const isSameW = Number(tr.sourceWalletId) === Number(tr.destinationWalletId);
       entries.push({
         uniqueKey: `TR_${tr.id}`,
         entityId: tr.id,
         kind: 'TRANSFER',
         date: Number(tr.date) || Date.now(),
-        title: `${srcW ? srcW.name : 'Wallet'} → ${dstW ? dstW.name : 'Wallet'}`,
-        subtitle: tr.note ? tr.note : (tr.feeAmount > 0 ? `Fee: ${this.formatAmount(tr.feeAmount, this.currencySymbolForCode(srcW?.currency))}` : 'Wallet Transfer'),
+        title: isSameW && isReturnTr
+          ? `${srcW ? srcW.name : 'Wallet'} (Personal → Fund)`
+          : `${srcW ? srcW.name : 'Wallet'} → ${dstW ? dstW.name : 'Wallet'}`,
+        subtitle: cleanNote ? cleanNote : (tr.feeAmount > 0 ? `Fee: ${this.formatAmount(tr.feeAmount, this.currencySymbolForCode(srcW?.currency))}` : 'Wallet Transfer'),
         walletId: Number(tr.sourceWalletId),
         secondaryWalletId: Number(tr.destinationWalletId),
         categoryId: null,
-        signedAmountText: this.formatAmount(tr.amount, this.currencySymbolForCode(srcW?.currency)),
-        rawAmount: this.roundCurrency(tr.amount),
+        signedAmountText: this.formatAmount(trAmt, this.currencySymbolForCode(srcW?.currency)),
+        rawAmount: this.roundCurrency(trAmt),
         isPositiveFlow: false,
-        badgeLabel: 'TRANSFER',
+        badgeLabel: isBorrowTr ? 'PERSONAL BORROW' : isReturnTr ? 'RETURNED TO FUND' : isFundTr ? 'FUND TRANSFER' : 'TRANSFER',
         reference: '',
         tags: '',
         attachmentUri: '',
@@ -598,12 +753,14 @@ export const AccountingEngine = {
         delta = -entry.rawAmount;
       } else if (entry.kind === 'TRANSFER') {
         const tr = entry.rawEntity;
-        if (Number(tr.sourceWalletId) === wId) {
-          delta = -(Number(tr.amount) || 0) - (Number(tr.feeAmount) || 0);
+        if (Number(tr.sourceWalletId) === wId && Number(tr.destinationWalletId) === wId) {
+          delta = 0;
+        } else if (Number(tr.sourceWalletId) === wId) {
+          delta = -(Number(tr.amount ?? tr.principalAmount) || 0) - (Number(tr.feeAmount) || 0);
         } else if (Number(tr.destinationWalletId) === wId) {
-          delta = tr.destinationAmount !== null && tr.destinationAmount !== undefined
+          delta = tr.destinationAmount !== null && tr.destinationAmount !== undefined && Number(tr.destinationAmount) > 0
             ? Number(tr.destinationAmount)
-            : Number(tr.amount) || 0;
+            : Number(tr.amount ?? tr.principalAmount) || 0;
         }
       } else if (entry.kind === 'LOAN_LENT') {
         delta = -entry.rawAmount;

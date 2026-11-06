@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.*
 import com.example.ui.PocketScreen
 import com.example.ui.PocketUiState
@@ -55,24 +57,14 @@ fun TransactionFormScreen(
     val existingTx = remember(editTransactionId, uiState.transactions) {
         uiState.transactions.firstOrNull { it.id == editTransactionId }
     }
-    val existingChildFeeTx = remember(existingTx, uiState.transactions) {
-        if (existingTx != null) {
-            uiState.transactions.firstOrNull { it.parentTransactionId == existingTx.id }
-        } else null
-    }
 
-    var selectedType by remember(existingTx, initialType) {
-        mutableStateOf(
-            when (existingTx?.type) {
-                TransactionType.INCOME.name -> TransactionType.INCOME
-                TransactionType.EXPENSE_REVERSAL.name -> TransactionType.INCOME
-                TransactionType.EXPENSE.name -> TransactionType.EXPENSE
-                else -> initialType
-            }
-        )
-    }
-    var recordRefundAsExpenseReversal by remember(existingTx) {
-        mutableStateOf(existingTx?.type == TransactionType.EXPENSE_REVERSAL.name)
+    val selectedType = remember(existingTx, initialType) {
+        when (existingTx?.type) {
+            TransactionType.INCOME.name -> TransactionType.INCOME
+            TransactionType.EXPENSE_REVERSAL.name -> TransactionType.INCOME
+            TransactionType.EXPENSE.name -> TransactionType.EXPENSE
+            else -> initialType
+        }
     }
 
     var amountText by remember(existingTx) {
@@ -97,8 +89,8 @@ fun TransactionFormScreen(
         )
     }
 
-    val filteredCategories = remember(uiState.categories, selectedType, recordRefundAsExpenseReversal, existingTx?.categoryId) {
-        val catType = if (selectedType == TransactionType.INCOME && !recordRefundAsExpenseReversal) "INCOME" else "EXPENSE"
+    val filteredCategories = remember(uiState.categories, selectedType, existingTx?.categoryId) {
+        val catType = if (selectedType == TransactionType.INCOME) "INCOME" else "EXPENSE"
         uiState.categories.filter { it.type == catType && (!it.isArchived || it.id == existingTx?.categoryId) }
     }
 
@@ -110,133 +102,63 @@ fun TransactionFormScreen(
         )
     }
 
-    // Split Transaction state (One Payment -> Multiple Categories - Item 7)
-    var isSplitMode by remember(existingTx) { mutableStateOf(false) }
-    val splitEntries = remember(existingTx) {
-        mutableStateListOf<Pair<Long, String>>()
-    }
-    LaunchedEffect(isSplitMode, filteredCategories) {
-        if (isSplitMode && splitEntries.isEmpty() && filteredCategories.isNotEmpty()) {
-            val firstCat = selectedCategoryId.takeIf { id -> filteredCategories.any { it.id == id } }
-                ?: filteredCategories.first().id
-            val secondCat = filteredCategories.firstOrNull { it.id != firstCat }?.id ?: firstCat
-            splitEntries.add(firstCat to amountText)
-            splitEntries.add(secondCat to "")
-        }
-    }
-
     var selectedDateMillis by remember(existingTx) {
         mutableStateOf(existingTx?.date ?: System.currentTimeMillis())
     }
     var showTxDatePicker by remember { mutableStateOf(false) }
     var noteText by remember(existingTx) { mutableStateOf(existingTx?.note ?: "") }
-    var referenceText by remember(existingTx) { mutableStateOf(existingTx?.reference ?: "") }
     var tagsText by remember(existingTx) { mutableStateOf(existingTx?.tags ?: "") }
-    var attachmentUri by remember(existingTx) { mutableStateOf(existingTx?.attachmentUri ?: "") }
-    var showMoreDetails by remember(existingTx) {
-        mutableStateOf(existingTx != null && (existingTx.reference.isNotBlank() || existingTx.tags.isNotBlank()))
-    }
     var showInlineCategoryDialog by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
-
-    // 1st-time Recurring Transaction setup state (Option A: Ask to Confirm)
-    var makeRecurring by remember(existingTx) { mutableStateOf(false) }
-    var recurringTitle by remember(existingTx) { mutableStateOf("") }
-    var recurringAmountMode by remember(existingTx) { mutableStateOf(RecurringAmountMode.FIXED) }
-    var recurringFrequency by remember(existingTx) { mutableStateOf(RecurringFrequency.MONTHLY) }
-    var recurringDayOfMonthText by remember(selectedDateMillis) {
-        val day = Calendar.getInstance().apply { timeInMillis = selectedDateMillis }.get(Calendar.DAY_OF_MONTH)
-        mutableStateOf(day.toString())
-    }
-    var recurringCustomDaysText by remember(existingTx) { mutableStateOf("30") }
+    var showExpenseFundDropdown by remember { mutableStateOf(false) }
     val view = LocalView.current
 
     val selectedWalletSummary = activeWallets.firstOrNull { it.wallet.id == selectedWalletId }
     val selectedWalletCurrency = selectedWalletSummary?.wallet?.currency?.ifBlank { "BDT" }?.uppercase() ?: "BDT"
     val symbol = AccountingEngine.currencySymbolForCode(selectedWalletCurrency)
 
-    // Cross-currency conversion & service charge options when paying/receiving (and when editing linked fee)
-    var useConversionOrCharge by remember(existingTx, existingChildFeeTx) {
-        mutableStateOf(existingChildFeeTx != null)
-    }
-    var txConversionMode by remember(existingTx) { mutableStateOf("NONE") } // "NONE", "RATE", "FIXED_CONVERTED"
-    var txConversionRateText by remember(existingTx) { mutableStateOf("") }
-    var txConvertedFixedText by remember(existingTx) { mutableStateOf("") }
-    var txServiceFeeMode by remember(existingTx, existingChildFeeTx) {
-        mutableStateOf(if (existingChildFeeTx != null) "FIXED" else "NONE")
-    } // "NONE", "PERCENTAGE", "FIXED"
-    var txServiceFeeInputText by remember(existingTx, existingChildFeeTx) {
-        mutableStateOf(formatNumericFieldInitialValue(existingChildFeeTx?.amount))
-    }
-
-    val splitTotalAmount = remember(isSplitMode, splitEntries.toList()) {
-        if (!isSplitMode) 0.0
-        else AccountingEngine.roundCurrency(
-            splitEntries.sumOf { (_, expr) ->
-                evaluateMathExpression(expr) ?: expr.toDoubleOrNull() ?: 0.0
+    var txFundMode by remember(existingTx?.id) {
+        mutableStateOf(
+            when {
+                existingTx?.tags?.contains("FUND_BORROW", ignoreCase = true) == true -> "FUND_BORROW"
+                existingTx?.tags?.contains("FUND_EXPENSE", ignoreCase = true) == true -> "FUND_EXPENSE"
+                existingTx?.tags?.contains("FUND_IN", ignoreCase = true) == true -> "FUND_IN"
+                else -> "PERSONAL"
             }
         )
     }
 
-    val rawInputAmount = remember(amountText, isSplitMode, splitTotalAmount) {
-        if (isSplitMode && splitTotalAmount > 0.0) {
-            splitTotalAmount
-        } else {
-            evaluateMathExpression(amountText) ?: amountText.toDoubleOrNull() ?: 0.0
-        }
+    val parsedAmount = remember(amountText) {
+        evaluateMathExpression(amountText) ?: amountText.toDoubleOrNull() ?: 0.0
     }
-    val effectiveTxPrincipal = remember(rawInputAmount, useConversionOrCharge, txConversionMode, txConversionRateText, txConvertedFixedText) {
-        if (!useConversionOrCharge) {
-            rawInputAmount
-        } else {
-            when (txConversionMode) {
-                "RATE" -> {
-                    val rate = txConversionRateText.toDoubleOrNull() ?: 1.0
-                    if (rate > 0.0) AccountingEngine.roundCurrency(rawInputAmount * rate) else rawInputAmount
-                }
-                "FIXED_CONVERTED" -> {
-                    val fixedConv = txConvertedFixedText.toDoubleOrNull() ?: 0.0
-                    if (fixedConv > 0.0) AccountingEngine.roundCurrency(fixedConv) else rawInputAmount
-                }
-                else -> rawInputAmount
-            }
+    val isSplitFundWalletSelected = uiState.isFundEnabled &&
+        selectedWalletSummary?.hasVirtualFund == true &&
+        selectedWalletSummary.wallet.isFundWallet != true
+
+    val availableWalletBalanceForCheck = remember(selectedWalletSummary, existingTx, selectedWalletId, txFundMode, isSplitFundWalletSelected) {
+        val baseBal = when {
+            selectedWalletSummary == null -> 0.0
+            isSplitFundWalletSelected && (txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW") ->
+                selectedWalletSummary.fundBalance
+            isSplitFundWalletSelected ->
+                selectedWalletSummary.personalBalance
+            else ->
+                selectedWalletSummary.currentBalance
         }
-    }
-    val effectiveTxServiceFee = remember(effectiveTxPrincipal, useConversionOrCharge, txServiceFeeMode, txServiceFeeInputText) {
-        if (!useConversionOrCharge) {
-            0.0
-        } else {
-            val feeIn = evaluateMathExpression(txServiceFeeInputText) ?: txServiceFeeInputText.toDoubleOrNull() ?: 0.0
-            when (txServiceFeeMode) {
-                "PERCENTAGE" -> if (feeIn > 0.0) AccountingEngine.roundCurrency(effectiveTxPrincipal * (feeIn / 100.0)) else 0.0
-                "FIXED" -> if (feeIn > 0.0) AccountingEngine.roundCurrency(feeIn) else 0.0
-                else -> 0.0
-            }
-        }
-    }
-    val parsedAmount = effectiveTxPrincipal
-    val totalWalletOutflow = effectiveTxPrincipal + effectiveTxServiceFee
-    val availableWalletBalanceForCheck = remember(selectedWalletSummary, existingTx, existingChildFeeTx, selectedWalletId) {
-        val currentBal = selectedWalletSummary?.currentBalance ?: 0.0
         if (existingTx == null || existingTx.walletId != selectedWalletId) {
-            currentBal
+            baseBal
         } else {
             val priorMainDelta = if (existingTx.type == TransactionType.EXPENSE.name) {
                 existingTx.amount
             } else {
                 -existingTx.amount
             }
-            val priorFeeDelta = if (existingChildFeeTx != null && existingChildFeeTx.walletId == selectedWalletId) {
-                existingChildFeeTx.amount
-            } else {
-                0.0
-            }
-            AccountingEngine.roundCurrency(currentBal + priorMainDelta + priorFeeDelta)
+            AccountingEngine.roundCurrency(baseBal + priorMainDelta)
         }
     }
     val willBecomeNegative = selectedType == TransactionType.EXPENSE &&
         selectedWalletSummary != null &&
-        (availableWalletBalanceForCheck - totalWalletOutflow) < -0.005
+        (availableWalletBalanceForCheck - parsedAmount) < -0.005
 
     val pocketColors = LocalPocketColors.current
     val formBlur by animateDpAsState(
@@ -244,6 +166,69 @@ fun TransactionFormScreen(
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "tx_form_blur"
     )
+
+    fun handleSave(navigateBackOnSave: Boolean): Boolean {
+        val finalType = if (selectedType == TransactionType.INCOME) {
+            TransactionType.INCOME.name
+        } else {
+            TransactionType.EXPENSE.name
+        }
+        if (selectedWalletId == 0L) {
+            validationError = "Please select or create a wallet first."
+            return false
+        }
+        if (parsedAmount <= 0.0) {
+            validationError = "Please enter a positive numeric amount greater than 0."
+            return false
+        }
+        if (selectedCategoryId == 0L) {
+            validationError = "Please select a category."
+            return false
+        }
+        val baseTagsList = tagsText.split(",")
+            .map { it.trim() }
+            .filter {
+                it.isNotBlank() &&
+                    !it.equals("FUND_BORROW", ignoreCase = true) &&
+                    !it.equals("FUND_EXPENSE", ignoreCase = true) &&
+                    !it.equals("FUND_IN", ignoreCase = true)
+            }
+            .toMutableList()
+        if (uiState.isFundEnabled) {
+            if (selectedType == TransactionType.EXPENSE) {
+                if (txFundMode == "FUND_BORROW") {
+                    baseTagsList.add("FUND_BORROW")
+                } else if (txFundMode == "FUND_EXPENSE") {
+                    baseTagsList.add("FUND_EXPENSE")
+                }
+            } else if (selectedType == TransactionType.INCOME && txFundMode == "FUND_IN") {
+                baseTagsList.add("FUND_IN")
+            }
+        }
+        val tx = TransactionEntity(
+            id = existingTx?.id ?: 0L,
+            type = finalType,
+            amount = AccountingEngine.roundCurrency(parsedAmount),
+            date = selectedDateMillis,
+            walletId = selectedWalletId,
+            categoryId = selectedCategoryId,
+            note = noteText.trim(),
+            reference = existingTx?.reference ?: "",
+            tags = baseTagsList.joinToString(", "),
+            transferId = existingTx?.transferId,
+            loanActivityId = existingTx?.loanActivityId,
+            parentTransactionId = existingTx?.parentTransactionId,
+            attachmentUri = existingTx?.attachmentUri ?: ""
+        )
+        performPocketHaptic(view)
+        viewModel.saveTransaction(
+            transaction = tx,
+            navigateBackOnSave = navigateBackOnSave,
+            recurringSetup = null,
+            serviceFeeAmount = 0.0
+        )
+        return true
+    }
 
     Surface(
         modifier = Modifier
@@ -260,47 +245,14 @@ fun TransactionFormScreen(
                 .background(Color.Transparent)
         ) {
             PocketTopBar(
-                title = if (existingTx != null) "Edit Transaction" else if (selectedType == TransactionType.INCOME) "Add Income" else "Add Expense",
+                title = when {
+                    existingTx != null && selectedType == TransactionType.INCOME -> "Edit Income"
+                    existingTx != null -> "Edit Expense"
+                    selectedType == TransactionType.INCOME -> "Add Income"
+                    else -> "Add Expense"
+                },
                 onBack = { viewModel.navigateBack() },
                 actions = {
-                    if (existingTx == null) {
-                        CsvBankImportButtonAndDialog(
-                            wallets = activeWallets.map { it.wallet },
-                            categories = uiState.categories,
-                            defaultWalletId = selectedWalletId,
-                            onImportTransactions = { importedList ->
-                                viewModel.importCsvTransactions(
-                                    importedTransactions = importedList,
-                                    navigateBackOnSave = true
-                                )
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        SmsPasteButtonAndDialog(
-                            wallets = activeWallets.map { it.wallet },
-                            onSmsParsed = { parsed ->
-                                selectedType = parsed.inferredType
-                                recordRefundAsExpenseReversal = false
-                                amountText = formatNumericFieldInitialValue(parsed.amount)
-                                if (parsed.matchedWalletId != null) {
-                                    selectedWalletId = parsed.matchedWalletId
-                                }
-                                if (parsed.feeAmount > 0.0) {
-                                    useConversionOrCharge = true
-                                    txServiceFeeMode = "FIXED"
-                                    txServiceFeeInputText = formatNumericFieldInitialValue(parsed.feeAmount)
-                                }
-                                if (parsed.reference.isNotBlank()) {
-                                    referenceText = parsed.reference
-                                    showMoreDetails = true
-                                }
-                                if (noteText.isBlank() && parsed.summaryNote.isNotBlank()) {
-                                    noteText = parsed.summaryNote
-                                }
-                                viewModel.postStatusMessage("Auto-filled from ${parsed.providerName.ifBlank { "SMS" }}.")
-                            }
-                        )
-                    }
                     if (existingTx != null) {
                         IconButton(
                             onClick = {
@@ -312,12 +264,31 @@ fun TransactionFormScreen(
                                     viewModel.navigateBack()
                                 }
                             },
-                            modifier = Modifier.size(48.dp)
+                            modifier = Modifier.size(40.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.DeleteOutline,
                                 contentDescription = "Delete transaction",
                                 tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .clickable { handleSave(navigateBackOnSave = true) }
+                            .testTag("top_save_transaction_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Save",
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -331,413 +302,332 @@ fun TransactionFormScreen(
                 contentPadding = PaddingValues(bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-            // Type Toggle
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    FilterChip(
-                        selected = selectedType == TransactionType.EXPENSE,
-                        onClick = {
-                            selectedType = TransactionType.EXPENSE
-                            recordRefundAsExpenseReversal = false
-                        },
-                        label = { Text("Expense") },
-                        leadingIcon = { Icon(Icons.Default.RemoveCircleOutline, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("form_type_expense_chip")
-                    )
-                    FilterChip(
-                        selected = selectedType == TransactionType.INCOME,
-                        onClick = { selectedType = TransactionType.INCOME },
-                        label = { Text("Income") },
-                        leadingIcon = { Icon(Icons.Default.AddCircleOutline, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("form_type_income_chip")
-                    )
-                }
-            }
-
-            // Amount Input + Built-in Mini Calculator (with cursor auto-advance after +, -, ×, ÷)
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MathAmountTextField(
-                        value = if (isSplitMode && splitTotalAmount > 0.0) {
-                            formatNumericFieldInitialValue(splitTotalAmount)
-                        } else {
-                            amountText
-                        },
-                        onValueChange = {
-                            if (!isSplitMode) {
-                                amountText = sanitizeMathExpressionInput(it)
-                                validationError = null
-                            }
-                        },
-                        label = {
-                            Text(
-                                when {
-                                    isSplitMode -> "Total Split Amount ($symbol $selectedWalletCurrency)"
-                                    useConversionOrCharge && txConversionMode != "NONE" -> "Entered Amount (Before Conversion)"
-                                    else -> "Amount ($symbol $selectedWalletCurrency) · e.g. 120+45"
-                                }
-                            )
-                        },
-                        placeholder = { Text("0") },
-                        textStyle = TabularMoneyLarge,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clearZeroOnFocus(amountText) { if (!isSplitMode) amountText = it }
-                            .testTag("transaction_amount_input")
-                    )
-                    if (!isSplitMode) {
-                        MiniCalculatorBar(
-                            expression = amountText,
-                            currencySymbol = symbol,
-                            onExpressionChange = {
-                                amountText = it
-                                validationError = null
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Refund as Expense Reversal option (when in Income mode)
-            if (selectedType == TransactionType.INCOME) {
+                // i. Date (no "Date" title, no Today/Yesterday chips — just current selected date in clickable calendar picker)
                 item {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { showTxDatePicker = true }
+                            .testTag("transaction_date_picker_badge")
                     ) {
                         Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarMonth,
+                                contentDescription = "Pick Date",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(selectedDateMillis)),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // ii. Amount (larger number field & larger font size)
+                item {
+                    MathAmountTextField(
+                        value = amountText,
+                        onValueChange = {
+                            amountText = sanitizeMathExpressionInput(it)
+                            validationError = null
+                        },
+                        label = {
+                            Text("Amount ($symbol $selectedWalletCurrency)")
+                        },
+                        placeholder = {
+                            Text(
+                                text = "0",
+                                style = TabularMoneyLarge.copy(fontSize = 30.sp, lineHeight = 36.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            )
+                        },
+                        textStyle = TabularMoneyLarge.copy(fontSize = 30.sp, lineHeight = 36.sp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 72.dp)
+                            .clearZeroOnFocus(amountText) { amountText = it }
+                            .testTag("transaction_amount_input")
+                    )
+                }
+
+                // iii. Source/Note (Optional)
+                item {
+                    val recentMerchants = remember(uiState.transactions, selectedType) {
+                        val targetType = if (selectedType == TransactionType.INCOME) {
+                            TransactionType.INCOME.name
+                        } else {
+                            TransactionType.EXPENSE.name
+                        }
+                        uiState.transactions
+                            .asSequence()
+                            .filter {
+                                it.parentTransactionId == null &&
+                                    it.note.isNotBlank() &&
+                                    it.type == targetType
+                            }
+                            .sortedByDescending { it.date }
+                            .distinctBy { it.note.trim().lowercase(Locale.ENGLISH) }
+                            .toList()
+                    }
+                    val matchingMerchantSuggestions = remember(noteText, recentMerchants) {
+                        val q = noteText.trim()
+                        if (q.isEmpty()) {
+                            recentMerchants.take(6)
+                        } else {
+                            recentMerchants.filter {
+                                it.note.contains(q, ignoreCase = true) &&
+                                    !it.note.trim().equals(q, ignoreCase = true)
+                            }.take(6)
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = noteText,
+                            onValueChange = { updated ->
+                                val formatted = capitalizeFirstLetter(updated)
+                                noteText = formatted
+                                if (existingTx == null && formatted.trim().length >= 2) {
+                                    val exactMatch = recentMerchants.firstOrNull {
+                                        it.note.trim().equals(formatted.trim(), ignoreCase = true)
+                                    }
+                                    if (exactMatch != null && filteredCategories.any { it.id == exactMatch.categoryId }) {
+                                        selectedCategoryId = exactMatch.categoryId
+                                    }
+                                }
+                            },
+                            label = {
+                                Text("Source / Note (Optional)")
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { recordRefundAsExpenseReversal = !recordRefundAsExpenseReversal }
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = recordRefundAsExpenseReversal,
-                                onCheckedChange = { recordRefundAsExpenseReversal = it }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Refund / Expense Reversal", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "Increases wallet balance and offsets an expense category instead of inflating income.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                .testTag("transaction_note_input")
+                        )
+
+                        if (matchingMerchantSuggestions.isNotEmpty()) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.testTag("merchant_autocomplete_chips_row")
+                            ) {
+                                items(matchingMerchantSuggestions, key = { it.id }) { pastTx ->
+                                    val catName = filteredCategories.firstOrNull { it.id == pastTx.categoryId }?.name
+                                    AssistChip(
+                                        onClick = {
+                                            noteText = pastTx.note.trim()
+                                            if (filteredCategories.any { it.id == pastTx.categoryId }) {
+                                                selectedCategoryId = pastTx.categoryId
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                text = if (catName != null) "${pastTx.note.trim()} · $catName" else pastTx.note.trim(),
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.History,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        },
+                                        modifier = Modifier
+                                            .heightIn(min = 34.dp)
+                                            .testTag("merchant_chip_${pastTx.note.trim()}")
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Wallet Selector
-            item {
-                Text(
-                    text = if (selectedType == TransactionType.INCOME) "Destination Wallet" else "Payment Wallet",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(activeWallets, key = { it.wallet.id }) { summary ->
-                        val isSelected = summary.wallet.id == selectedWalletId
-                        val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { selectedWalletId = summary.wallet.id },
-                            label = {
-                                Text(
-                                    "${summary.wallet.name} (${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)})"
-                                )
-                            },
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("select_wallet_chip_${summary.wallet.name}")
-                        )
-                    }
-                }
-
-                // Currency Conversion & Linked Service Charge option (available for both new and edited transactions)
-                Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    border = BorderStroke(1.dp, pocketColors.cardBorder)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                // iv. Destination Wallet (with right-side Toggle for Add Income, or Dropdown for Add Expense)
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text(
+                            text = "Destination Wallet",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        if (uiState.isFundEnabled) {
+                            if (selectedType == TransactionType.INCOME) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Add to Fund",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (txFundMode == "FUND_IN") {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        fontWeight = if (txFundMode == "FUND_IN") FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                    Switch(
+                                        checked = txFundMode == "FUND_IN",
+                                        onCheckedChange = { isChecked ->
+                                            txFundMode = if (isChecked) "FUND_IN" else "PERSONAL"
+                                        },
+                                        modifier = Modifier.testTag("income_mode_add_to_fund_chip")
+                                    )
+                                }
+                            } else {
+                                val selectedModeLabel = when (txFundMode) {
+                                    "FUND_EXPENSE" -> "Fund Expense"
+                                    "FUND_BORROW" -> "Borrow from fund"
+                                    else -> "Personal"
+                                }
+                                Box {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                        border = BorderStroke(1.dp, pocketColors.cardBorder),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { showExpenseFundDropdown = true }
+                                            .testTag("expense_fund_mode_dropdown")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = selectedModeLabel,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (txFundMode == "PERSONAL") {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                } else {
+                                                    MaterialTheme.colorScheme.primary
+                                                }
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowDropDown,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                    DropdownMenu(
+                                        expanded = showExpenseFundDropdown,
+                                        onDismissRequest = { showExpenseFundDropdown = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Personal") },
+                                            onClick = {
+                                                txFundMode = "PERSONAL"
+                                                showExpenseFundDropdown = false
+                                            },
+                                            modifier = Modifier.testTag("fund_expense_personal_chip")
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Fund Expense") },
+                                            onClick = {
+                                                txFundMode = "FUND_EXPENSE"
+                                                showExpenseFundDropdown = false
+                                            },
+                                            modifier = Modifier.testTag("fund_expense_regular_chip")
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Borrow from fund") },
+                                            onClick = {
+                                                txFundMode = "FUND_BORROW"
+                                                showExpenseFundDropdown = false
+                                            },
+                                            modifier = Modifier.testTag("fund_expense_personal_borrow_chip")
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(activeWallets, key = { "wallet_${it.wallet.id}" }) { summary ->
+                            val isSelected = summary.wallet.id == selectedWalletId
+                            val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { selectedWalletId = summary.wallet.id },
+                                label = {
+                                    Text(
+                                        "${summary.wallet.name} (${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)})"
+                                    )
+                                },
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("select_wallet_chip_${summary.wallet.name}")
+                            )
+                        }
+                    }
+
+                    if (willBecomeNegative && uiState.settings.warnOnNegativeBalance) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val balanceBucketLabel = when {
+                            isSplitFundWalletSelected && (txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW") -> "available Fund balance"
+                            isSplitFundWalletSelected -> "available Personal balance"
+                            else -> "available balance"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = pocketColors.expenseContainer,
+                            border = BorderStroke(1.dp, pocketColors.expenseText.copy(alpha = 0.4f))
+                        ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { useConversionOrCharge = !useConversionOrCharge }
-                                    .testTag("tx_conversion_service_charge_toggle"),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                    .padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (selectedWalletCurrency != "BDT") {
-                                            "Currency Conversion & Service Charge ($selectedWalletCurrency)"
-                                        } else {
-                                            "Currency Conversion / Service Charge"
-                                        },
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "Convert from another currency (rate or fixed) or add a % / fixed service charge",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = useConversionOrCharge,
-                                    onCheckedChange = { useConversionOrCharge = it }
+                                Icon(
+                                    imageVector = Icons.Default.WarningAmber,
+                                    contentDescription = null,
+                                    tint = pocketColors.expenseText
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Heads up: This expense exceeds ${selectedWalletSummary?.wallet?.name}'s $balanceBucketLabel (${AccountingEngine.formatMoney(availableWalletBalanceForCheck, symbol)}) and will result in a negative balance.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = pocketColors.expenseText
                                 )
                             }
-
-                            AnimatedVisibility(visible = useConversionOrCharge) {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    HorizontalDivider(color = pocketColors.cardBorder)
-                                    Text(
-                                        text = "Currency Conversion to $selectedWalletCurrency ($symbol)",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        FilterChip(
-                                            selected = txConversionMode == "NONE",
-                                            onClick = { txConversionMode = "NONE" },
-                                            label = { Text("No Conversion") }
-                                        )
-                                        FilterChip(
-                                            selected = txConversionMode == "RATE",
-                                            onClick = { txConversionMode = "RATE" },
-                                            label = { Text("Conversion Rate") },
-                                            modifier = Modifier.testTag("tx_conv_mode_rate_chip")
-                                        )
-                                        FilterChip(
-                                            selected = txConversionMode == "FIXED_CONVERTED",
-                                            onClick = { txConversionMode = "FIXED_CONVERTED" },
-                                            label = { Text("Fixed Amount") },
-                                            modifier = Modifier.testTag("tx_conv_mode_fixed_chip")
-                                        )
-                                    }
-
-                                    if (txConversionMode == "RATE") {
-                                        OutlinedTextField(
-                                            value = txConversionRateText,
-                                            onValueChange = { txConversionRateText = sanitizeNumericInput(it) },
-                                            label = { Text("Conversion Multiplier Rate (e.g., 122 or 0.0082)") },
-                                            placeholder = { Text("1.0") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clearZeroOnFocus(txConversionRateText) { txConversionRateText = it }
-                                                .testTag("tx_conversion_rate_input")
-                                        )
-                                    } else if (txConversionMode == "FIXED_CONVERTED") {
-                                        OutlinedTextField(
-                                            value = txConvertedFixedText,
-                                            onValueChange = { txConvertedFixedText = sanitizeNumericInput(it) },
-                                            label = { Text("Fixed Converted Amount ($symbol $selectedWalletCurrency)") },
-                                            placeholder = { Text("0") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clearZeroOnFocus(txConvertedFixedText) { txConvertedFixedText = it }
-                                                .testTag("tx_converted_fixed_input")
-                                        )
-                                    }
-
-                                    Text(
-                                        text = "Service Charge ($symbol $selectedWalletCurrency)",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        FilterChip(
-                                            selected = txServiceFeeMode == "NONE",
-                                            onClick = { txServiceFeeMode = "NONE" },
-                                            label = { Text("None") }
-                                        )
-                                        FilterChip(
-                                            selected = txServiceFeeMode == "PERCENTAGE",
-                                            onClick = { txServiceFeeMode = "PERCENTAGE" },
-                                            label = { Text("Percentage (%)") },
-                                            modifier = Modifier.testTag("tx_fee_mode_pct_chip")
-                                        )
-                                        FilterChip(
-                                            selected = txServiceFeeMode == "FIXED",
-                                            onClick = { txServiceFeeMode = "FIXED" },
-                                            label = { Text("Fixed ($symbol)") },
-                                            modifier = Modifier.testTag("tx_fee_mode_fixed_chip")
-                                        )
-                                    }
-
-                                    if (txServiceFeeMode != "NONE") {
-                                        OutlinedTextField(
-                                            value = txServiceFeeInputText,
-                                            onValueChange = { txServiceFeeInputText = sanitizeNumericInput(it) },
-                                            label = {
-                                                Text(
-                                                    if (txServiceFeeMode == "PERCENTAGE") "Service Charge (%) — e.g. 1.85"
-                                                    else "Fixed Service Charge ($symbol $selectedWalletCurrency)"
-                                                )
-                                            },
-                                            placeholder = { Text("0") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clearZeroOnFocus(txServiceFeeInputText) { txServiceFeeInputText = it }
-                                                .testTag("tx_service_fee_input")
-                                        )
-                                    }
-
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = pocketColors.overlayCard,
-                                        border = BorderStroke(1.dp, pocketColors.cardBorder)
-                                    ) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(10.dp),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            SummaryKvRow(
-                                                "Wallet amount ($selectedWalletCurrency):",
-                                                AccountingEngine.formatMoney(effectiveTxPrincipal, symbol)
-                                            )
-                                            if (effectiveTxServiceFee > 0.0) {
-                                                SummaryKvRow(
-                                                    "Service charge:",
-                                                    AccountingEngine.formatMoney(effectiveTxServiceFee, symbol)
-                                                )
-                                                SummaryKvRow(
-                                                    "Total wallet impact:",
-                                                    AccountingEngine.formatMoney(effectiveTxPrincipal + effectiveTxServiceFee, symbol),
-                                                    bold = true
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                if (willBecomeNegative && uiState.settings.warnOnNegativeBalance) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = pocketColors.expenseContainer,
-                        border = BorderStroke(1.dp, pocketColors.expenseText.copy(alpha = 0.4f))
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.WarningAmber,
-                                contentDescription = null,
-                                tint = pocketColors.expenseText
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "Heads up: This expense exceeds ${selectedWalletSummary?.wallet?.name}'s available balance (${AccountingEngine.formatMoney(availableWalletBalanceForCheck, symbol)}) and will result in a negative balance.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = pocketColors.expenseText
-                            )
                         }
                     }
                 }
-            }
 
-            // Category Selector + Inline Add Category + Split Transaction Mode
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                // v. Category (with "New category" card at the end of the category list)
+                item {
                     Text(
-                        text = if (recordRefundAsExpenseReversal) "Expense Category to Reverse" else "Category",
+                        text = "Category",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (existingTx == null && !recordRefundAsExpenseReversal && filteredCategories.size >= 2) {
-                            FilterChip(
-                                selected = isSplitMode,
-                                onClick = {
-                                    isSplitMode = !isSplitMode
-                                    if (isSplitMode && splitEntries.isEmpty()) {
-                                        val firstCatId = selectedCategoryId.takeIf { it != 0L } ?: filteredCategories.first().id
-                                        val secondCatId = filteredCategories.firstOrNull { it.id != firstCatId }?.id ?: firstCatId
-                                        val half = if (effectiveTxPrincipal > 0.0) AccountingEngine.roundCurrency(effectiveTxPrincipal / 2.0) else 0.0
-                                        val rem = if (effectiveTxPrincipal > 0.0) AccountingEngine.roundCurrency(effectiveTxPrincipal - half) else 0.0
-                                        splitEntries.clear()
-                                        splitEntries.add(firstCatId to (if (half > 0) half.toString().removeSuffix(".0") else ""))
-                                        splitEntries.add(secondCatId to (if (rem > 0) rem.toString().removeSuffix(".0") else ""))
-                                    }
-                                },
-                                label = { Text("Split") },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.CallSplit,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                },
-                                modifier = Modifier
-                                    .heightIn(min = 40.dp)
-                                    .testTag("toggle_split_transaction_chip")
-                            )
-                        }
-                        TextButton(
-                            onClick = {
-                                val customCount = SubscriptionManager.countCustomCategories(uiState.categories)
-                                val s = uiState.settings
-                                if (!SubscriptionManager.canAddCategory(customCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                                    viewModel.showUpgradeDialog("Free tier allows 1 new custom category. Upgrade to Pocket Premium for unlimited categories.")
-                                } else {
-                                    showInlineCategoryDialog = true
-                                }
-                            },
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("inline_add_category_button")
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("New Category")
-                        }
-                    }
-                }
-
-                if (!isSplitMode) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(filteredCategories, key = { it.id }) { cat ->
                             FilterChip(
@@ -756,760 +646,168 @@ fun TransactionFormScreen(
                                     .testTag("select_category_chip_${cat.name}")
                             )
                         }
-                    }
-                } else {
-                    val enteredAmount = evaluateMathExpression(amountText) ?: amountText.toDoubleOrNull() ?: 0.0
-                    val splitTotal = splitEntries.sumOf { (_, expr) -> evaluateMathExpression(expr) ?: expr.toDoubleOrNull() ?: 0.0 }
-                    val remainingToSplit = AccountingEngine.roundCurrency(enteredAmount - splitTotal)
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                        border = BorderStroke(1.dp, pocketColors.cardBorder),
-                        modifier = Modifier.padding(top = 6.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Split Payment Into Multiple Categories",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = if (enteredAmount <= 0.0) {
-                                        "Total: ${AccountingEngine.formatMoney(splitTotal, symbol)}"
-                                    } else if (remainingToSplit == 0.0) {
-                                        "✓ Balanced"
-                                    } else if (remainingToSplit > 0.0) {
-                                        "Remaining: ${AccountingEngine.formatMoney(remainingToSplit, symbol)}"
-                                    } else {
-                                        "Over by: ${AccountingEngine.formatMoney(-remainingToSplit, symbol)}"
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (remainingToSplit == 0.0 && enteredAmount > 0.0) {
-                                        pocketColors.incomeText
-                                    } else {
-                                        MaterialTheme.colorScheme.primary
-                                    }
-                                )
-                            }
-
-                            splitEntries.forEachIndexed { idx, (entryCatId, entryAmountText) ->
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = pocketColors.overlayCard,
-                                    border = BorderStroke(1.dp, pocketColors.cardBorder)
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "Split #${idx + 1}",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            if (splitEntries.size > 2) {
-                                                IconButton(
-                                                    onClick = {
-                                                        splitEntries.removeAt(idx)
-                                                    },
-                                                    modifier = Modifier.size(32.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Close,
-                                                        contentDescription = "Remove Split",
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            items(filteredCategories, key = { "${idx}_${it.id}" }) { cat ->
-                                                FilterChip(
-                                                    selected = entryCatId == cat.id,
-                                                    onClick = {
-                                                        splitEntries[idx] = cat.id to entryAmountText
-                                                    },
-                                                    label = { Text(cat.name, style = MaterialTheme.typography.labelSmall) },
-                                                    leadingIcon = {
-                                                        Icon(
-                                                            imageVector = iconForName(cat.iconName),
-                                                            contentDescription = null,
-                                                            modifier = Modifier.size(14.dp)
-                                                        )
-                                                    }
-                                                )
-                                            }
-                                        }
-
-                                        MathAmountTextField(
-                                            value = entryAmountText,
-                                            onValueChange = { updated ->
-                                                splitEntries[idx] = entryCatId to sanitizeMathExpressionInput(updated)
-                                            },
-                                            label = { Text("Split Amount ($symbol)") },
-                                            placeholder = { Text("0") },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clearZeroOnFocus(entryAmountText) { cleared ->
-                                                    splitEntries[idx] = entryCatId to cleared
-                                                }
-                                                .testTag("split_amount_input_$idx")
-                                        )
-                                    }
-                                }
-                            }
-
-                            TextButton(
-                                onClick = {
-                                    val defaultCatId = filteredCategories.firstOrNull { cat ->
-                                        splitEntries.none { it.first == cat.id }
-                                    }?.id ?: filteredCategories.first().id
-                                    val remText = if (remainingToSplit > 0.0) remainingToSplit.toString().removeSuffix(".0") else ""
-                                    splitEntries.add(defaultCatId to remText)
-                                },
-                                modifier = Modifier.testTag("add_split_row_button")
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Add Another Split Category")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Merchant / Source / Note with Smart Auto-Complete Chips & Category Auto-Select (Item 10)
-            item {
-                val recentMerchants = remember(uiState.transactions, selectedType, recordRefundAsExpenseReversal) {
-                    val targetType = when {
-                        selectedType == TransactionType.INCOME && recordRefundAsExpenseReversal -> TransactionType.EXPENSE_REVERSAL.name
-                        selectedType == TransactionType.INCOME -> TransactionType.INCOME.name
-                        else -> TransactionType.EXPENSE.name
-                    }
-                    uiState.transactions
-                        .asSequence()
-                        .filter {
-                            it.parentTransactionId == null &&
-                                it.note.isNotBlank() &&
-                                (it.type == targetType || (targetType == TransactionType.EXPENSE.name && it.type == TransactionType.EXPENSE.name))
-                        }
-                        .sortedByDescending { it.date }
-                        .distinctBy { it.note.trim().lowercase(Locale.ENGLISH) }
-                        .toList()
-                }
-                val matchingMerchantSuggestions = remember(noteText, recentMerchants) {
-                    val q = noteText.trim()
-                    if (q.isEmpty()) {
-                        recentMerchants.take(6)
-                    } else {
-                        recentMerchants.filter {
-                            it.note.contains(q, ignoreCase = true) &&
-                                !it.note.trim().equals(q, ignoreCase = true)
-                        }.take(6)
-                    }
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = noteText,
-                        onValueChange = { updated ->
-                            val formatted = capitalizeFirstLetter(updated)
-                            noteText = formatted
-                            if (existingTx == null && formatted.trim().length >= 2) {
-                                val exactMatch = recentMerchants.firstOrNull {
-                                    it.note.trim().equals(formatted.trim(), ignoreCase = true)
-                                }
-                                if (exactMatch != null && filteredCategories.any { it.id == exactMatch.categoryId }) {
-                                    selectedCategoryId = exactMatch.categoryId
-                                }
-                            }
-                        },
-                        label = {
-                            Text(if (selectedType == TransactionType.INCOME) "Source / Note (Optional)" else "Merchant / Note (Optional)")
-                        },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("transaction_note_input")
-                    )
-
-                    if (matchingMerchantSuggestions.isNotEmpty()) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.testTag("merchant_autocomplete_chips_row")
-                        ) {
-                            items(matchingMerchantSuggestions, key = { it.id }) { pastTx ->
-                                val catName = filteredCategories.firstOrNull { it.id == pastTx.categoryId }?.name
-                                AssistChip(
-                                    onClick = {
-                                        noteText = pastTx.note.trim()
-                                        if (filteredCategories.any { it.id == pastTx.categoryId }) {
-                                            selectedCategoryId = pastTx.categoryId
-                                        }
-                                    },
-                                    label = {
-                                        Text(
-                                            text = if (catName != null) "${pastTx.note.trim()} · $catName" else pastTx.note.trim(),
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.History,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .heightIn(min = 34.dp)
-                                        .testTag("merchant_chip_${pastTx.note.trim()}")
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Receipt / Bill / MFS Screenshot Attachment (Optional)
-            item {
-                AttachmentPhotoRow(
-                    attachmentUri = attachmentUri,
-                    onAttachmentChanged = { attachmentUri = it },
-                    label = "Attach Receipt, Warranty Slip, or Screenshot (Optional)"
-                )
-            }
-
-            // Date Quick Selector + Clickable Date Badge opening DatePickerDialog (Item 1)
-            item {
-                Text("Date", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    AssistChip(
-                        onClick = { selectedDateMillis = System.currentTimeMillis() },
-                        label = { Text("Today") },
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    )
-                    AssistChip(
-                        onClick = {
-                            selectedDateMillis = Calendar.getInstance().apply {
-                                add(Calendar.DAY_OF_YEAR, -1)
-                            }.timeInMillis
-                        },
-                        label = { Text("Yesterday") },
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { showTxDatePicker = true }
-                            .testTag("transaction_date_picker_badge")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CalendarMonth,
-                                contentDescription = "Pick Date",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(selectedDateMillis)),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Tags / Event Mode (#SylhetTrip, #EidShopping, #Wedding, etc.)
-            item {
-                val presetTags = remember(uiState.transactions) {
-                    val userTags = uiState.transactions
-                        .asSequence()
-                        .flatMap { it.tags.split(",") }
-                        .map { it.trim().removePrefix("#") }
-                        .filter { it.isNotBlank() && !it.equals("recurring", ignoreCase = true) }
-                        .distinct()
-                        .toList()
-                    (userTags + listOf("SylhetTrip", "EidShopping", "Wedding", "Family", "Work")).distinct().take(10)
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = tagsText,
-                        onValueChange = { tagsText = it },
-                        label = { Text("Event / #Tags (e.g., #SylhetTrip, #EidShopping)") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("transaction_tags_input")
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(presetTags) { tag ->
-                            val normalizedTag = "#$tag"
-                            val currentTags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                            val isTagSelected = currentTags.any {
-                                it.removePrefix("#").equals(tag, ignoreCase = true)
-                            }
+                        item(key = "new_category_card") {
                             FilterChip(
-                                selected = isTagSelected,
+                                selected = false,
                                 onClick = {
-                                    val updated = if (isTagSelected) {
-                                        currentTags.filterNot { it.removePrefix("#").equals(tag, ignoreCase = true) }
+                                    val customCount = SubscriptionManager.countCustomCategories(uiState.categories)
+                                    val s = uiState.settings
+                                    if (!SubscriptionManager.canAddCategory(customCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
+                                        viewModel.showUpgradeDialog("Free tier allows 1 new custom category. Upgrade to Pocket Premium for unlimited categories.")
                                     } else {
-                                        currentTags + normalizedTag
+                                        showInlineCategoryDialog = true
                                     }
-                                    tagsText = updated.joinToString(", ")
                                 },
-                                label = { Text(normalizedTag, style = MaterialTheme.typography.labelSmall) }
+                                label = { Text("New category") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("inline_add_category_button")
                             )
                         }
                     }
-
-                    TextButton(
-                        onClick = { showMoreDetails = !showMoreDetails },
-                        modifier = Modifier.heightIn(min = 40.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (showMoreDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Reference / Invoice #")
-                    }
-                    AnimatedVisibility(visible = showMoreDetails) {
-                        OutlinedTextField(
-                            value = referenceText,
-                            onValueChange = { referenceText = capitalizeFirstLetter(it) },
-                            label = { Text("Reference (e.g., Salary Month, Invoice #)") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
                 }
-            }
 
-            // Recurring Transaction Setup (Option A: Ask to Confirm)
-            if (existingTx == null && !recordRefundAsExpenseReversal && !isSplitMode) {
+                // vi. Tags (collapsed/minimalist by default unless user taps + Add Tags or already has tags)
                 item {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                        border = BorderStroke(1.dp, pocketColors.cardBorder)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { makeRecurring = !makeRecurring },
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.EventRepeat,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = if (selectedType == TransactionType.INCOME) {
-                                                "Make this Recurring Income"
-                                            } else {
-                                                "Make this a Recurring Bill / Subscription"
-                                            },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Text(
-                                            text = "Notifies you next cycle to Pay (pick wallet) or Remind Tomorrow.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                                Switch(
-                                    checked = makeRecurring,
-                                    onCheckedChange = { checked ->
-                                        if (checked) {
-                                            val canAdd = SubscriptionManager.canAddRecurringBill(
-                                                uiState.recurringTransactions.size,
-                                                uiState.settings.subscriptionTier,
-                                                uiState.settings.subscriptionExpiresAt
-                                            )
-                                            if (!canAdd) {
-                                                viewModel.showUpgradeDialog("Free tier allows up to 2 recurring bills / subscriptions. Upgrade to Pocket Premium for unlimited recurring schedules.")
-                                            } else {
-                                                makeRecurring = true
-                                            }
-                                        } else {
-                                            makeRecurring = false
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("form_make_recurring_switch")
-                                )
+                    var showTagsSection by remember(existingTx?.id) {
+                        mutableStateOf(
+                            existingTx?.tags
+                                ?.split(",")
+                                ?.map { it.trim() }
+                                ?.any {
+                                    it.isNotBlank() &&
+                                        !it.equals("FUND_BORROW", ignoreCase = true) &&
+                                        !it.equals("FUND_EXPENSE", ignoreCase = true) &&
+                                        !it.equals("FUND_IN", ignoreCase = true)
+                                } == true
+                        )
+                    }
+                    val presetTags = remember(uiState.transactions) {
+                        val userTags = uiState.transactions
+                            .asSequence()
+                            .flatMap { it.tags.split(",") }
+                            .map { it.trim().removePrefix("#") }
+                            .filter {
+                                it.isNotBlank() &&
+                                    !it.equals("recurring", ignoreCase = true) &&
+                                    !it.equals("FUND_BORROW", ignoreCase = true) &&
+                                    !it.equals("FUND_EXPENSE", ignoreCase = true) &&
+                                    !it.equals("FUND_IN", ignoreCase = true)
                             }
-
-                            AnimatedVisibility(visible = makeRecurring) {
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    HorizontalDivider(color = pocketColors.cardBorder)
-
-                                    OutlinedTextField(
-                                        value = recurringTitle,
-                                        onValueChange = { recurringTitle = capitalizeFirstLetter(it) },
-                                        label = {
-                                            Text(
-                                                if (selectedType == TransactionType.INCOME) {
-                                                    "Recurring Title (e.g., Monthly Salary, Rent Income)"
-                                                } else {
-                                                    "Bill / Subscription Name (e.g., Netflix, WiFi, DESCO)"
-                                                }
-                                            )
-                                        },
-                                        placeholder = {
-                                            val defaultTitle = noteText.trim().ifBlank {
-                                                filteredCategories.firstOrNull { it.id == selectedCategoryId }?.name ?: "Monthly Bill"
-                                            }
-                                            Text(defaultTitle)
-                                        },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("form_recurring_title_input")
-                                    )
-
-                                    Text(
-                                        text = "Next Cycle Amount Type",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        FilterChip(
-                                            selected = recurringAmountMode == RecurringAmountMode.FIXED,
-                                            onClick = { recurringAmountMode = RecurringAmountMode.FIXED },
-                                            label = { Text("Fixed Subscription") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.Lock,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .heightIn(min = 48.dp)
-                                                .testTag("form_recurring_mode_fixed_chip")
-                                        )
-                                        FilterChip(
-                                            selected = recurringAmountMode == RecurringAmountMode.MANUAL,
-                                            onClick = { recurringAmountMode = RecurringAmountMode.MANUAL },
-                                            label = { Text("Manual Input") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.Edit,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .heightIn(min = 48.dp)
-                                                .testTag("form_recurring_mode_manual_chip")
-                                        )
-                                    }
-                                    Text(
-                                        text = if (recurringAmountMode == RecurringAmountMode.FIXED) {
-                                            "Fixed Subscription: Next time you tap Pay, ${if (parsedAmount > 0) AccountingEngine.formatMoney(parsedAmount, symbol) else "this amount"} will be pre-filled automatically."
-                                        } else {
-                                            "Manual Input: Next time you tap Pay, you will be asked to enter the exact bill amount before choosing a wallet."
-                                        },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-
-                                    Text(
-                                        text = "Billing Cycle",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    LazyRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        items(RecurringFrequency.entries) { freq ->
-                                            FilterChip(
-                                                selected = recurringFrequency == freq,
-                                                onClick = { recurringFrequency = freq },
-                                                label = {
-                                                    Text(
-                                                        when (freq) {
-                                                            RecurringFrequency.MONTHLY -> "Monthly"
-                                                            RecurringFrequency.WEEKLY -> "Weekly"
-                                                            RecurringFrequency.QUARTERLY -> "Quarterly"
-                                                            RecurringFrequency.YEARLY -> "Yearly"
-                                                            RecurringFrequency.CUSTOM_DAYS -> "Custom Days"
-                                                        }
-                                                    )
-                                                },
-                                                modifier = Modifier.heightIn(min = 48.dp)
-                                            )
-                                        }
-                                    }
-
-                                    if (recurringFrequency == RecurringFrequency.MONTHLY) {
-                                        OutlinedTextField(
-                                            value = recurringDayOfMonthText,
-                                            onValueChange = { raw ->
-                                                val digits = PocketLocalizer.normalizeToAsciiDigits(raw).filter { it in '0'..'9' }.take(2)
-                                                val num = digits.toIntOrNull()
-                                                recurringDayOfMonthText = if (num != null && num > 31) "31" else digits
-                                            },
-                                            label = { Text("Billing Day of Month (1–31)") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clearZeroOnFocus(recurringDayOfMonthText) { recurringDayOfMonthText = it }
-                                                .testTag("form_recurring_day_input")
-                                        )
-                                    } else if (recurringFrequency == RecurringFrequency.CUSTOM_DAYS) {
-                                        OutlinedTextField(
-                                            value = recurringCustomDaysText,
-                                            onValueChange = { raw ->
-                                                recurringCustomDaysText = PocketLocalizer.normalizeToAsciiDigits(raw).filter { it in '0'..'9' }.take(3)
-                                            },
-                                            label = { Text("Repeat Every X Days (e.g., 14, 45, 90)") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clearZeroOnFocus(recurringCustomDaysText) { recurringCustomDaysText = it }
-                                                .testTag("form_recurring_custom_days_input")
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                            .distinct()
+                            .toList()
+                        (userTags + listOf("SylhetTrip", "EidShopping", "Wedding", "Family", "Work")).distinct().take(10)
                     }
-                }
-            }
-
-            if (validationError != null) {
-                item {
-                    Text(
-                        text = validationError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-
-            // Save Actions
-            item {
-                fun handleSave(navigateBackOnSave: Boolean): Boolean {
-                    val finalType = when {
-                        selectedType == TransactionType.INCOME && recordRefundAsExpenseReversal -> TransactionType.EXPENSE_REVERSAL.name
-                        selectedType == TransactionType.INCOME -> TransactionType.INCOME.name
-                        else -> TransactionType.EXPENSE.name
-                    }
-                    if (selectedWalletId == 0L) {
-                        validationError = "Please select or create a wallet first."
-                        return false
-                    }
-
-                    if (isSplitMode && existingTx == null) {
-                        val validSplits = splitEntries.mapIndexedNotNull { idx, (catId, exprText) ->
-                            val splitAmt = evaluateMathExpression(exprText) ?: exprText.toDoubleOrNull() ?: 0.0
-                            if (splitAmt > 0.0 && catId != 0L) {
-                                val catName = filteredCategories.firstOrNull { it.id == catId }?.name ?: "Split #${idx + 1}"
-                                val splitNote = if (noteText.isNotBlank()) "${noteText.trim()} ($catName)" else "Split: $catName"
-                                TransactionEntity(
-                                    id = 0L,
-                                    type = finalType,
-                                    amount = AccountingEngine.roundCurrency(splitAmt),
-                                    date = selectedDateMillis,
-                                    walletId = selectedWalletId,
-                                    categoryId = catId,
-                                    note = splitNote,
-                                    reference = referenceText.trim(),
-                                    tags = listOfNotNull(tagsText.trim().takeIf { it.isNotBlank() }, "split").joinToString(", "),
-                                    attachmentUri = attachmentUri
+                    if (!showTagsSection) {
+                        AssistChip(
+                            onClick = { showTagsSection = true },
+                            label = { Text("Add Tags (Optional)") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Tag,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                            } else null
-                        }
-                        if (validSplits.size < 2) {
-                            validationError = "Please enter valid positive amounts for at least 2 split categories."
-                            return false
-                        }
-                        performPocketHaptic(view)
-                        viewModel.saveSplitTransactions(
-                            splitTransactions = validSplits,
-                            serviceFeeAmount = effectiveTxServiceFee,
-                            navigateBackOnSave = navigateBackOnSave
-                        )
-                        return true
-                    }
-
-                    val amt = effectiveTxPrincipal
-                    if (amt <= 0.0) {
-                        validationError = "Please enter a positive numeric amount greater than 0."
-                        return false
-                    }
-                    if (selectedCategoryId == 0L) {
-                        validationError = "Please select a category."
-                        return false
-                    }
-                    val tx = TransactionEntity(
-                        id = existingTx?.id ?: 0L,
-                        type = finalType,
-                        amount = AccountingEngine.roundCurrency(amt),
-                        date = selectedDateMillis,
-                        walletId = selectedWalletId,
-                        categoryId = selectedCategoryId,
-                        note = noteText.trim(),
-                        reference = referenceText.trim(),
-                        tags = if (makeRecurring && existingTx == null) {
-                            listOfNotNull(tagsText.trim().takeIf { it.isNotBlank() }, "recurring").joinToString(", ")
-                        } else {
-                            tagsText.trim()
-                        },
-                        transferId = existingTx?.transferId,
-                        loanActivityId = existingTx?.loanActivityId,
-                        parentTransactionId = existingTx?.parentTransactionId,
-                        attachmentUri = attachmentUri
-                    )
-
-                    val recurringEntity = if (makeRecurring && existingTx == null && !recordRefundAsExpenseReversal) {
-                        val categoryName = filteredCategories.firstOrNull { it.id == selectedCategoryId }?.name ?: "Recurring"
-                        val resolvedTitle = recurringTitle.trim().ifBlank {
-                            noteText.trim().ifBlank { categoryName }
-                        }
-                        val dayOfMonth = (recurringDayOfMonthText.toIntOrNull() ?: Calendar.getInstance().apply {
-                            timeInMillis = selectedDateMillis
-                        }.get(Calendar.DAY_OF_MONTH)).coerceIn(1, 31)
-                        val customDays = (recurringCustomDaysText.toIntOrNull() ?: 30).coerceIn(1, 365)
-                        val nextDueMillis = PocketRepository.calculateNextRecurringDueDate(
-                            fromMillis = selectedDateMillis,
-                            frequency = recurringFrequency.name,
-                            dayOfMonth = dayOfMonth,
-                            customIntervalDays = customDays
-                        )
-                        RecurringTransactionEntity(
-                            title = resolvedTitle,
-                            type = finalType,
-                            amountMode = recurringAmountMode.name,
-                            amount = AccountingEngine.roundCurrency(amt),
-                            categoryId = selectedCategoryId,
-                            defaultWalletId = selectedWalletId,
-                            frequency = recurringFrequency.name,
-                            dayOfMonth = dayOfMonth,
-                            customIntervalDays = customDays,
-                            nextDueDate = nextDueMillis,
-                            lastPaidDate = selectedDateMillis,
-                            note = noteText.trim(),
-                            isActive = true
-                        )
-                    } else {
-                        null
-                    }
-                    performPocketHaptic(view)
-                    viewModel.saveTransaction(
-                        transaction = tx,
-                        navigateBackOnSave = navigateBackOnSave,
-                        recurringSetup = recurringEntity,
-                        serviceFeeAmount = effectiveTxServiceFee
-                    )
-                    return true
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = { handleSave(navigateBackOnSave = true) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("save_transaction_button"),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Text(if (existingTx != null) "Save Changes" else if (isSplitMode) "Save Split Transactions" else "Save")
-                    }
-
-                    if (existingTx == null) {
-                        OutlinedButton(
-                            onClick = {
-                                if (handleSave(navigateBackOnSave = false)) {
-                                    amountText = ""
-                                    noteText = ""
-                                    referenceText = ""
-                                    makeRecurring = false
-                                    recurringTitle = ""
-                                    txServiceFeeInputText = ""
-                                    attachmentUri = ""
-                                    isSplitMode = false
-                                }
                             },
                             modifier = Modifier
+                                .heightIn(min = 40.dp)
+                                .testTag("expand_tags_chip")
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = tagsText,
+                                onValueChange = { tagsText = it },
+                                label = { Text("Tags") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("transaction_tags_input")
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(presetTags) { tag ->
+                                    val normalizedTag = "#$tag"
+                                    val currentTags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                                    val isTagSelected = currentTags.any {
+                                        it.removePrefix("#").equals(tag, ignoreCase = true)
+                                    }
+                                    FilterChip(
+                                        selected = isTagSelected,
+                                        onClick = {
+                                            val updated = if (isTagSelected) {
+                                                currentTags.filterNot { it.removePrefix("#").equals(tag, ignoreCase = true) }
+                                            } else {
+                                                currentTags + normalizedTag
+                                            }
+                                            tagsText = updated.joinToString(", ")
+                                        },
+                                        label = { Text(normalizedTag, style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (validationError != null) {
+                    item {
+                        Text(
+                            text = validationError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                // Save & Save & Add another
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = { handleSave(navigateBackOnSave = true) },
+                            modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("save_and_add_another_button"),
+                                .height(52.dp)
+                                .testTag("save_transaction_button"),
                             shape = RoundedCornerShape(14.dp)
                         ) {
-                            Text("Save & Add Another")
+                            Text(if (existingTx != null) "Save Changes" else "Save")
+                        }
+
+                        if (existingTx == null) {
+                            OutlinedButton(
+                                onClick = {
+                                    if (handleSave(navigateBackOnSave = false)) {
+                                        amountText = ""
+                                        noteText = ""
+                                        tagsText = ""
+                                        txFundMode = "PERSONAL"
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("save_and_add_another_button"),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text("Save & Add another")
+                            }
                         }
                     }
                 }
             }
-        }
         }
     }
 
     if (showInlineCategoryDialog) {
         var newCatName by remember { mutableStateOf("") }
-        val targetCatType = if (selectedType == TransactionType.INCOME && !recordRefundAsExpenseReversal) "INCOME" else "EXPENSE"
+        val targetCatType = if (selectedType == TransactionType.INCOME) "INCOME" else "EXPENSE"
         AlertDialog(
             onDismissRequest = { showInlineCategoryDialog = false },
             containerColor = pocketColors.overlaySurface,
@@ -1607,7 +905,6 @@ fun TransferFormScreen(
             .mapNotNull { id -> uiState.walletSummaries.firstOrNull { it.wallet.id == id } }
         active + extra
     }
-    val symbol = uiState.settings.currencySymbol
     val pocketColors = LocalPocketColors.current
 
     var sourceWalletId by remember(existingTransfer, preselectedSourceWalletId, wallets) {
@@ -1647,7 +944,26 @@ fun TransferFormScreen(
             if ((existingTransfer?.percentageInput ?: 0.0) > 0.0) formatNumericFieldInitialValue(existingTransfer!!.percentageInput) else ""
         )
     }
-    var noteText by remember(existingTransfer) { mutableStateOf(existingTransfer?.note ?: "") }
+    var fundTransferMode by remember(existingTransfer) {
+        mutableStateOf(
+            when {
+                existingTransfer?.note?.contains("[FUND_TRANSFER]", ignoreCase = true) == true -> "FUND_TRANSFER"
+                existingTransfer?.note?.contains("[FUND_BORROW]", ignoreCase = true) == true -> "BORROW"
+                existingTransfer?.note?.contains("[FUND_RETURN]", ignoreCase = true) == true -> "RETURN"
+                else -> "REGULAR"
+            }
+        )
+    }
+    var noteText by remember(existingTransfer) {
+        mutableStateOf(
+            existingTransfer?.note
+                ?.replace("[FUND_TRANSFER]", "", ignoreCase = true)
+                ?.replace("[FUND_BORROW]", "", ignoreCase = true)
+                ?.replace("[FUND_RETURN]", "", ignoreCase = true)
+                ?.trim()
+                ?: ""
+        )
+    }
     var selectedTransferDateMillis by remember(existingTransfer) {
         mutableStateOf(existingTransfer?.date ?: System.currentTimeMillis())
     }
@@ -1672,13 +988,40 @@ fun TransferFormScreen(
     val totalSourceDebit = AccountingEngine.roundCurrency(principal + calculatedFee)
     val sourceSummary = wallets.firstOrNull { it.wallet.id == sourceWalletId }
     val destSummary = wallets.firstOrNull { it.wallet.id == destWalletId }
+    val isSourceDedicatedFund = sourceSummary?.wallet?.isFundWallet == true
+    val isDestDedicatedFund = destSummary?.wallet?.isFundWallet == true
+    val isSourceFund = isSourceDedicatedFund || (sourceSummary?.fundBalance ?: 0.0) > 0.005
+    val isDestFund = isDestDedicatedFund || (destSummary?.fundBalance ?: 0.0) > 0.005
+    LaunchedEffect(sourceWalletId, destWalletId) {
+        if (existingTransfer == null) {
+            val srcW = wallets.firstOrNull { it.wallet.id == sourceWalletId }
+            val dstW = wallets.firstOrNull { it.wallet.id == destWalletId }
+            when {
+                srcW?.wallet?.isFundWallet == true -> {
+                    if (fundTransferMode != "BORROW") {
+                        fundTransferMode = "FUND_TRANSFER"
+                    }
+                }
+                dstW?.wallet?.isFundWallet == true && uiState.totalFundBorrowedDue > 0.005 && (srcW?.fundBalance ?: 0.0) <= 0.005 -> {
+                    fundTransferMode = "RETURN"
+                }
+                dstW?.wallet?.isFundWallet == true && (srcW?.fundBalance ?: 0.0) > 0.005 -> {
+                    fundTransferMode = "FUND_TRANSFER"
+                }
+                else -> {
+                    if (fundTransferMode == "FUND_TRANSFER" && (srcW?.fundBalance ?: 0.0) <= 0.005 && dstW?.wallet?.isFundWallet != true) {
+                        fundTransferMode = "REGULAR"
+                    }
+                }
+            }
+        }
+    }
     val sourceCurrency = sourceSummary?.wallet?.currency?.ifBlank { "BDT" }?.uppercase() ?: "BDT"
     val destCurrency = destSummary?.wallet?.currency?.ifBlank { "BDT" }?.uppercase() ?: "BDT"
     val sourceSymbol = AccountingEngine.currencySymbolForCode(sourceCurrency)
     val destSymbol = AccountingEngine.currencySymbolForCode(destCurrency)
     val isCrossCurrency = !sourceCurrency.equals(destCurrency, ignoreCase = true)
 
-    // Cross-currency conversion state ("RATE" vs "FIXED_AMOUNT")
     var conversionInputMode by remember(existingTransfer) {
         mutableStateOf(
             if ((existingTransfer?.destinationAmount ?: 0.0) > 0.0 && (existingTransfer?.conversionRate ?: 1.0) == 1.0) {
@@ -1752,6 +1095,61 @@ fun TransferFormScreen(
     }
     val sourceBalanceAfter = availableSourceBeforeEdit - totalSourceDebit
 
+    val isSameWalletInternalFundAllowed = uiState.isFundEnabled &&
+        (fundTransferMode == "RETURN" || fundTransferMode == "BORROW")
+
+    fun handleConfirmTransfer() {
+        when {
+            sourceWalletId == 0L || destWalletId == 0L ->
+                validationError = "Please select both source and destination wallets."
+            sourceWalletId == destWalletId && !isSameWalletInternalFundAllowed ->
+                validationError = "Source and destination wallets must differ."
+            principal <= 0.0 ->
+                validationError = "Transfer amount must be greater than zero."
+            isCrossCurrency && effectiveDestCredit <= 0.0 ->
+                validationError = "Please enter a valid conversion rate or converted destination amount."
+            calculatedFee < 0.0 ->
+                validationError = "Transfer fee cannot be negative."
+            else -> {
+                performPocketHaptic(view)
+                val effectiveSaveMode = if (!uiState.isFundEnabled) {
+                    "REGULAR"
+                } else if (isSourceDedicatedFund && fundTransferMode == "REGULAR") {
+                    "FUND_TRANSFER"
+                } else {
+                    fundTransferMode
+                }
+                val finalNote = when {
+                    uiState.isFundEnabled && (isSourceFund || isDestDedicatedFund) && effectiveSaveMode == "FUND_TRANSFER" ->
+                        if (noteText.isNotBlank()) "[FUND_TRANSFER] ${noteText.trim()}" else "[FUND_TRANSFER] Fund transfer from ${sourceSummary?.wallet?.name ?: "Source"} to ${destSummary?.wallet?.name ?: "Destination"}"
+                    uiState.isFundEnabled && isSourceFund && effectiveSaveMode == "BORROW" ->
+                        if (noteText.isNotBlank()) "[FUND_BORROW] ${noteText.trim()}" else "[FUND_BORROW] Personal borrow from ${sourceSummary?.wallet?.name ?: "Fund"}"
+                    uiState.isFundEnabled && effectiveSaveMode == "RETURN" ->
+                        if (noteText.isNotBlank()) "[FUND_RETURN] ${noteText.trim()}" else "[FUND_RETURN] Returned personal borrow to ${destSummary?.wallet?.name ?: "Fund"}"
+                    else -> noteText.trim()
+                }
+                viewModel.saveTransfer(
+                    transfer = TransferEntity(
+                        id = existingTransfer?.id ?: 0L,
+                        sourceWalletId = sourceWalletId,
+                        destinationWalletId = destWalletId,
+                        principalAmount = AccountingEngine.roundCurrency(principal),
+                        destinationAmount = if (isCrossCurrency) effectiveDestCredit else 0.0,
+                        conversionRate = if (isCrossCurrency) effectiveConversionRate else 1.0,
+                        feeMode = feeMode.name,
+                        fixedFeeInput = fixedFee.coerceAtLeast(0.0),
+                        percentageInput = pctRate.coerceAtLeast(0.0),
+                        feeAmount = calculatedFee,
+                        date = selectedTransferDateMillis,
+                        note = finalNote
+                    ),
+                    sourceWalletName = sourceSummary?.wallet?.name ?: "Source",
+                    destWalletName = destSummary?.wallet?.name ?: "Destination"
+                )
+            }
+        }
+    }
+
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -1766,31 +1164,26 @@ fun TransferFormScreen(
                 .background(Color.Transparent)
         ) {
             PocketTopBar(
-                title = if (existingTransfer != null) "Edit Wallet Transfer" else "Transfer Between Wallets",
+                title = if (existingTransfer != null) "Edit Transfer" else "Transfer",
                 onBack = { viewModel.navigateBack() },
                 actions = {
-                    if (existingTransfer == null) {
-                        SmsPasteButtonAndDialog(
-                            wallets = uiState.wallets.filter { !it.isArchived },
-                            onSmsParsed = { parsed ->
-                                if (parsed.amount > 0.0) {
-                                    principalText = parsed.amount.toString().removeSuffix(".0")
-                                }
-                                if (parsed.feeAmount > 0.0) {
-                                    feeMode = TransferFeeMode.MANUAL
-                                    fixedFeeText = parsed.feeAmount.toString().removeSuffix(".0")
-                                }
-                                if (parsed.matchedWalletId != null) {
-                                    sourceWalletId = parsed.matchedWalletId
-                                    if (destWalletId == sourceWalletId) {
-                                        destWalletId = wallets.firstOrNull { it.wallet.id != sourceWalletId }?.wallet?.id ?: 0L
-                                    }
-                                }
-                                if (parsed.summaryNote.isNotBlank() && noteText.isBlank()) {
-                                    noteText = if (parsed.reference.isNotBlank()) "${parsed.summaryNote} (TrxID: ${parsed.reference})" else parsed.summaryNote
-                                }
-                            }
-                        )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .clickable { handleConfirmTransfer() }
+                            .testTag("top_save_transfer_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Confirm Transfer",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             )
@@ -1802,9 +1195,46 @@ fun TransferFormScreen(
                 contentPadding = PaddingValues(bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Source Wallet
+                // i. Date (no "Date" title, no Today/Yesterday chips — just current selected date in clickable calendar picker)
                 item {
-                    Text("From Wallet (Source)", style = MaterialTheme.typography.titleMedium)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { showTransferDatePicker = true }
+                            .testTag("transfer_date_picker_badge")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarMonth,
+                                contentDescription = "Pick Transfer Date",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(selectedTransferDateMillis)),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // ii. Source
+                item {
+                    Text("Source", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(6.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(wallets, key = { it.wallet.id }) { summary ->
@@ -1813,7 +1243,7 @@ fun TransferFormScreen(
                                 selected = summary.wallet.id == sourceWalletId,
                                 onClick = {
                                     sourceWalletId = summary.wallet.id
-                                    if (destWalletId == summary.wallet.id) {
+                                    if (destWalletId == summary.wallet.id && !isSameWalletInternalFundAllowed) {
                                         destWalletId = wallets.firstOrNull { it.wallet.id != sourceWalletId }?.wallet?.id ?: 0L
                                     }
                                 },
@@ -1828,14 +1258,14 @@ fun TransferFormScreen(
                     }
                 }
 
-                // Swap Button + Destination Wallet
+                // iii. Destination
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("To Wallet (Destination)", style = MaterialTheme.typography.titleMedium)
+                        Text("Destination", style = MaterialTheme.typography.titleMedium)
                         TextButton(
                             onClick = {
                                 val tmp = sourceWalletId
@@ -1863,37 +1293,173 @@ fun TransferFormScreen(
                             )
                         }
                     }
-                }
 
-                // Amount to Transfer + Built-in Mini Calculator
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MathAmountTextField(
-                            value = principalText,
-                            onValueChange = {
-                                principalText = sanitizeMathExpressionInput(it)
-                                validationError = null
-                            },
-                            label = { Text("Amount to transfer ($sourceSymbol $sourceCurrency) · e.g. 500+250") },
-                            placeholder = { Text("0") },
-                            textStyle = TabularMoneyLarge,
+                    AnimatedVisibility(visible = uiState.isFundEnabled && (isSourceFund || isDestFund || isDestDedicatedFund || uiState.totalFundBorrowedDue > 0.005)) {
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clearZeroOnFocus(principalText) { principalText = it }
-                                .testTag("transfer_amount_input")
-                        )
-                        MiniCalculatorBar(
-                            expression = principalText,
-                            currencySymbol = sourceSymbol,
-                            onExpressionChange = {
-                                principalText = it
-                                validationError = null
+                                .padding(top = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (!isSourceDedicatedFund && !isDestDedicatedFund && sourceWalletId != destWalletId) {
+                                    item {
+                                        FilterChip(
+                                            selected = fundTransferMode == "REGULAR",
+                                            onClick = { fundTransferMode = "REGULAR" },
+                                            label = { Text("Regular Transfer") },
+                                            modifier = Modifier
+                                                .heightIn(min = 44.dp)
+                                                .testTag("transfer_fund_mode_regular_chip")
+                                        )
+                                    }
+                                }
+                                if ((isSourceFund || isDestDedicatedFund) && sourceWalletId != destWalletId) {
+                                    item {
+                                        FilterChip(
+                                            selected = fundTransferMode == "FUND_TRANSFER" || (isSourceDedicatedFund && fundTransferMode == "REGULAR"),
+                                            onClick = { fundTransferMode = "FUND_TRANSFER" },
+                                            label = { Text("Keep as Fund") },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Default.BusinessCenter,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            },
+                                            modifier = Modifier
+                                                .heightIn(min = 44.dp)
+                                                .testTag("transfer_fund_mode_fund_transfer_chip")
+                                        )
+                                    }
+                                }
+                                if (isSourceFund && !isDestDedicatedFund) {
+                                    item {
+                                        FilterChip(
+                                            selected = fundTransferMode == "BORROW",
+                                            onClick = { fundTransferMode = "BORROW" },
+                                            label = { Text("Personal Borrow") },
+                                            modifier = Modifier
+                                                .heightIn(min = 44.dp)
+                                                .testTag("transfer_fund_mode_borrow_chip")
+                                        )
+                                    }
+                                }
+                                if (isDestDedicatedFund || isDestFund || uiState.totalFundBorrowedDue > 0.005) {
+                                    item {
+                                        FilterChip(
+                                            selected = fundTransferMode == "RETURN",
+                                            onClick = { fundTransferMode = "RETURN" },
+                                            label = { Text("Return to Fund") },
+                                            modifier = Modifier
+                                                .heightIn(min = 44.dp)
+                                                .testTag("transfer_fund_mode_return_chip")
+                                        )
+                                    }
+                                }
                             }
+                        }
+                    }
+                }
+
+                // iv. Amount (larger number field & larger font size)
+                item {
+                    MathAmountTextField(
+                        value = principalText,
+                        onValueChange = {
+                            principalText = sanitizeMathExpressionInput(it)
+                            validationError = null
+                        },
+                        label = { Text("Amount ($sourceSymbol $sourceCurrency)") },
+                        placeholder = {
+                            Text(
+                                text = "0",
+                                style = TabularMoneyLarge.copy(fontSize = 30.sp, lineHeight = 36.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            )
+                        },
+                        textStyle = TabularMoneyLarge.copy(fontSize = 30.sp, lineHeight = 36.sp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 72.dp)
+                            .clearZeroOnFocus(principalText) { principalText = it }
+                            .testTag("transfer_amount_input")
+                    )
+                }
+
+                // v. Transfer Charge (compact horizontal chip row)
+                item {
+                    Text("Transfer Charge ($sourceSymbol $sourceCurrency)", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(TransferFeeMode.entries, key = { it.name }) { mode ->
+                            val compactLabel = when (mode) {
+                                TransferFeeMode.NONE -> "None"
+                                TransferFeeMode.MANUAL -> "Fixed ($sourceSymbol)"
+                                TransferFeeMode.PERCENTAGE -> "Percentage (%)"
+                                TransferFeeMode.FIXED_PLUS_PERCENTAGE -> "Fixed + %"
+                            }
+                            FilterChip(
+                                selected = feeMode == mode,
+                                onClick = { feeMode = mode },
+                                label = { Text(compactLabel) },
+                                modifier = Modifier
+                                    .heightIn(min = 44.dp)
+                                    .testTag("fee_mode_${mode.name}")
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    if (feeMode == TransferFeeMode.MANUAL || feeMode == TransferFeeMode.FIXED_PLUS_PERCENTAGE) {
+                        OutlinedTextField(
+                            value = fixedFeeText,
+                            onValueChange = { fixedFeeText = sanitizeNumericInput(it) },
+                            label = {
+                                Text(if (feeMode == TransferFeeMode.MANUAL) "Manual transfer charge ($sourceSymbol)" else "Fixed transfer fee ($sourceSymbol)")
+                            },
+                            placeholder = { Text("0") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clearZeroOnFocus(fixedFeeText) { fixedFeeText = it }
+                                .testTag("transfer_fixed_fee_input")
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    if (feeMode == TransferFeeMode.PERCENTAGE || feeMode == TransferFeeMode.FIXED_PLUS_PERCENTAGE) {
+                        OutlinedTextField(
+                            value = percentageText,
+                            onValueChange = { percentageText = sanitizeNumericInput(it) },
+                            label = { Text("Transfer charge percentage (%) — e.g. 1.5 or 1.85") },
+                            placeholder = { Text("1.85") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clearZeroOnFocus(percentageText) { percentageText = it }
+                                .testTag("transfer_percentage_fee_input")
+                        )
+                    }
+
+                    if (sourceBalanceAfter < -0.005 && uiState.settings.warnOnNegativeBalance) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Warning: Source wallet lacks sufficient funds and will have a negative balance after this transfer.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = pocketColors.expenseText
                         )
                     }
                 }
 
-                // Automatic Cross-Currency Conversion Section when sourceCurrency != destCurrency
+                // vi. Currency Conversion (Only show if transferring between different currencies)
                 if (isCrossCurrency) {
                     item {
                         Surface(
@@ -1915,11 +1481,6 @@ fun TransferFormScreen(
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "Input the conversion rate or fixed converted amount in $destCurrency:",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1983,190 +1544,16 @@ fun TransferFormScreen(
                     }
                 }
 
-                // Transfer / Service Charge Mode
-                item {
-                    Text("Service / Transfer charge ($sourceSymbol $sourceCurrency)", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TransferFeeMode.entries.forEach { mode ->
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { feeMode = mode }
-                                    .testTag("fee_mode_${mode.name}"),
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (feeMode == mode) pocketColors.surfaceSelected else pocketColors.overlayCard,
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (feeMode == mode) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
-                                )
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    RadioButton(
-                                        selected = feeMode == mode,
-                                        onClick = { feeMode = mode }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(mode.label, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    if (feeMode == TransferFeeMode.MANUAL || feeMode == TransferFeeMode.FIXED_PLUS_PERCENTAGE) {
-                        OutlinedTextField(
-                            value = fixedFeeText,
-                            onValueChange = { fixedFeeText = sanitizeNumericInput(it) },
-                            label = {
-                                Text(if (feeMode == TransferFeeMode.MANUAL) "Manual service charge ($sourceSymbol)" else "Fixed service fee ($sourceSymbol)")
-                            },
-                            placeholder = { Text("0") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clearZeroOnFocus(fixedFeeText) { fixedFeeText = it }
-                                .testTag("transfer_fixed_fee_input")
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                    if (feeMode == TransferFeeMode.PERCENTAGE || feeMode == TransferFeeMode.FIXED_PLUS_PERCENTAGE) {
-                        OutlinedTextField(
-                            value = percentageText,
-                            onValueChange = { percentageText = sanitizeNumericInput(it) },
-                            label = { Text("Service charge percentage (%) — e.g. 1.5 or 1.85") },
-                            placeholder = { Text("1.85") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clearZeroOnFocus(percentageText) { percentageText = it }
-                                .testTag("transfer_percentage_fee_input")
-                        )
-                    }
-                }
-
-                // Live Calculation Preview Box
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = pocketColors.overlayTransferContainer,
-                        border = BorderStroke(1.dp, pocketColors.transferText.copy(alpha = 0.35f))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = "Transfer Breakdown",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = pocketColors.transferText
-                            )
-                            SummaryKvRow(
-                                "Destination credit (${destSummary?.wallet?.name ?: "To"}):",
-                                "+${AccountingEngine.formatMoney(effectiveDestCredit, destSymbol)} $destCurrency"
-                            )
-                            if (isCrossCurrency) {
-                                SummaryKvRow(
-                                    "Conversion rate:",
-                                    "1 $sourceCurrency = ${String.format(Locale.ENGLISH, "%.4f", effectiveConversionRate)} $destCurrency"
-                                )
-                            }
-                            SummaryKvRow(
-                                "Service / transfer fee (recorded as Expense):",
-                                "${AccountingEngine.formatMoney(calculatedFee, sourceSymbol)} $sourceCurrency"
-                            )
-                            HorizontalDivider(color = pocketColors.transferText.copy(alpha = 0.2f))
-                            SummaryKvRow(
-                                "Total source debit (${sourceSummary?.wallet?.name ?: "From"}):",
-                                "−${AccountingEngine.formatMoney(totalSourceDebit, sourceSymbol)} $sourceCurrency",
-                                bold = true
-                            )
-                            SummaryKvRow(
-                                "Source balance after transfer:",
-                                "${AccountingEngine.formatMoney(sourceBalanceAfter, sourceSymbol)} $sourceCurrency"
-                            )
-                        }
-                    }
-
-                    if (sourceBalanceAfter < -0.005 && uiState.settings.warnOnNegativeBalance) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Warning: Source wallet lacks sufficient funds and will have a negative balance after this transfer.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = pocketColors.expenseText
-                        )
-                    }
-                }
-
+                // vii. Note
                 item {
                     OutlinedTextField(
                         value = noteText,
                         onValueChange = { noteText = capitalizeFirstLetter(it) },
-                        label = { Text("Note (e.g., Cash out, Metro top-up)") },
+                        label = { Text("Note") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         modifier = Modifier.fillMaxWidth()
                     )
-                }
-
-                // Date Quick Selector + Clickable Date Badge opening DatePickerDialog (Item 1)
-                item {
-                    Text("Date", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AssistChip(
-                            onClick = { selectedTransferDateMillis = System.currentTimeMillis() },
-                            label = { Text("Today") },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
-                        AssistChip(
-                            onClick = {
-                                selectedTransferDateMillis = Calendar.getInstance().apply {
-                                    add(Calendar.DAY_OF_YEAR, -1)
-                                }.timeInMillis
-                            },
-                            label = { Text("Yesterday") },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { showTransferDatePicker = true }
-                                .testTag("transfer_date_picker_badge")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CalendarMonth,
-                                    contentDescription = "Pick Transfer Date",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(selectedTransferDateMillis)),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
                 }
 
                 if (validationError != null) {
@@ -2179,43 +1566,10 @@ fun TransferFormScreen(
                     }
                 }
 
+                // viii. Confirm Transfer
                 item {
                     Button(
-                        onClick = {
-                            when {
-                                sourceWalletId == 0L || destWalletId == 0L ->
-                                    validationError = "Please select both source and destination wallets."
-                                sourceWalletId == destWalletId ->
-                                    validationError = "Source and destination wallets must differ."
-                                principal <= 0.0 ->
-                                    validationError = "Transfer amount must be greater than zero."
-                                isCrossCurrency && effectiveDestCredit <= 0.0 ->
-                                    validationError = "Please enter a valid conversion rate or converted destination amount."
-                                calculatedFee < 0.0 ->
-                                    validationError = "Transfer fee cannot be negative."
-                                else -> {
-                                    performPocketHaptic(view)
-                                    viewModel.saveTransfer(
-                                        transfer = TransferEntity(
-                                            id = existingTransfer?.id ?: 0L,
-                                            sourceWalletId = sourceWalletId,
-                                            destinationWalletId = destWalletId,
-                                            principalAmount = AccountingEngine.roundCurrency(principal),
-                                            destinationAmount = if (isCrossCurrency) effectiveDestCredit else 0.0,
-                                            conversionRate = if (isCrossCurrency) effectiveConversionRate else 1.0,
-                                            feeMode = feeMode.name,
-                                            fixedFeeInput = fixedFee.coerceAtLeast(0.0),
-                                            percentageInput = pctRate.coerceAtLeast(0.0),
-                                            feeAmount = calculatedFee,
-                                            date = selectedTransferDateMillis,
-                                            note = noteText.trim()
-                                        ),
-                                        sourceWalletName = sourceSummary?.wallet?.name ?: "Source",
-                                        destWalletName = destSummary?.wallet?.name ?: "Destination"
-                                    )
-                                }
-                            }
-                        },
+                        onClick = { handleConfirmTransfer() },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
@@ -2591,7 +1945,7 @@ fun TransactionHistoryScreen(
                 )
             }
 
-            // Minimal Combined Period & Type Filter Row
+            // Minimal Single-Line Combined Period & Type Filter Row
             item {
                 val monthNameLabel = remember(uiState.selectedYear, uiState.selectedMonth) {
                     val cal = Calendar.getInstance().apply {
@@ -2601,56 +1955,58 @@ fun TransactionHistoryScreen(
                     }
                     SimpleDateFormat("MMM yyyy", Locale.ENGLISH).format(cal.time)
                 }
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(HistoryDateRange.entries) { range ->
-                        val chipText = if (range == HistoryDateRange.THIS_MONTH) monthNameLabel else range.label
-                        FilterChip(
-                            selected = dateRange == range,
-                            onClick = { dateRange = range },
-                            label = { Text(chipText, style = MaterialTheme.typography.labelMedium) },
-                            modifier = Modifier.heightIn(min = 38.dp)
-                        )
-                    }
-                }
-            }
+                var showPeriodDropdown by remember { mutableStateOf(false) }
+                val activePeriodText = if (dateRange == HistoryDateRange.THIS_MONTH) monthNameLabel else dateRange.label
 
-            if (dateRange == HistoryDateRange.CUSTOM) {
-                item {
-                    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH) }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedButton(
-                            onClick = { showCustomStartPicker = true },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("history_custom_start_date_button"),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("From: ${dateFmt.format(Date(customStartMillis))}", style = MaterialTheme.typography.labelMedium)
-                        }
-                        OutlinedButton(
-                            onClick = { showCustomEndPicker = true },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("history_custom_end_date_button"),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("To: ${dateFmt.format(Date(customEndMillis))}", style = MaterialTheme.typography.labelMedium)
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    item {
+                        Box {
+                            FilterChip(
+                                selected = true,
+                                onClick = { showPeriodDropdown = true },
+                                label = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CalendarMonth,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(activePeriodText, style = MaterialTheme.typography.labelMedium)
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowDropDown,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                },
+                                modifier = Modifier
+                                    .heightIn(min = 36.dp)
+                                    .testTag("history_period_dropdown_chip")
+                            )
+                            DropdownMenu(
+                                expanded = showPeriodDropdown,
+                                onDismissRequest = { showPeriodDropdown = false }
+                            ) {
+                                HistoryDateRange.entries.forEach { range ->
+                                    val labelText = if (range == HistoryDateRange.THIS_MONTH) monthNameLabel else range.label
+                                    DropdownMenuItem(
+                                        text = { Text(labelText) },
+                                        onClick = {
+                                            dateRange = range
+                                            showPeriodDropdown = false
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
-                }
-            }
-
-            // Minimal Type Filter Chips
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     item {
                         FilterChip(
                             selected = typeFilter == null,
@@ -2700,6 +2056,40 @@ fun TransactionHistoryScreen(
                                 label = { Text("$activeCatName ✕", style = MaterialTheme.typography.labelMedium) },
                                 modifier = Modifier.heightIn(min = 36.dp)
                             )
+                        }
+                    }
+                }
+            }
+
+            if (dateRange == HistoryDateRange.CUSTOM) {
+                item {
+                    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = { showCustomStartPicker = true },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("history_custom_start_date_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("From: ${dateFmt.format(Date(customStartMillis))}", style = MaterialTheme.typography.labelMedium)
+                        }
+                        OutlinedButton(
+                            onClick = { showCustomEndPicker = true },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("history_custom_end_date_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Event, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("To: ${dateFmt.format(Date(customEndMillis))}", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }

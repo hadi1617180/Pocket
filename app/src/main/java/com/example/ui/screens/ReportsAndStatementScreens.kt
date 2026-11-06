@@ -176,50 +176,80 @@ fun ReportsScreen(
             title = "Report",
             onLogoClick = { viewModel.navigateTo(PocketScreen.Settings) },
             actions = {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
                         onClick = {
                             performPocketHaptic(view)
                             val fileName = "pocket-report-${report.monthLabel.lowercase(java.util.Locale.ENGLISH).replace(" ", "-")}.pdf"
                             createReportPdfLauncher.launch(fileName)
                         },
                         modifier = Modifier
-                            .heightIn(min = 44.dp)
+                            .size(40.dp)
                             .testTag("export_report_pdf_button"),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        color = pocketColors.surfaceElevated,
+                        border = BorderStroke(1.dp, pocketColors.cardBorder)
                     ) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("PDF")
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "Export PDF",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-                    OutlinedButton(
+                    Surface(
                         onClick = {
                             performPocketHaptic(view)
                             val fileName = "pocket-report-${report.monthLabel.lowercase(java.util.Locale.ENGLISH).replace(" ", "-")}.csv"
                             createReportCsvLauncher.launch(fileName)
                         },
                         modifier = Modifier
-                            .heightIn(min = 44.dp)
+                            .size(40.dp)
                             .testTag("export_report_csv_button"),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        color = pocketColors.surfaceElevated,
+                        border = BorderStroke(1.dp, pocketColors.cardBorder)
                     ) {
-                        Icon(Icons.Default.TableView, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("CSV")
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.TableView,
+                                contentDescription = "Export CSV",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-                    OutlinedButton(
+                    Surface(
                         onClick = { viewModel.navigateTo(PocketScreen.MonthlyStatement()) },
                         modifier = Modifier
-                            .heightIn(min = 44.dp)
+                            .height(40.dp)
                             .testTag("open_monthly_statement_button"),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        color = pocketColors.surfaceElevated,
+                        border = BorderStroke(1.dp, pocketColors.cardBorder)
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Statement")
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                contentDescription = "Statement",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Statement",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }

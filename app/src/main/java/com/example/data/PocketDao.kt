@@ -264,21 +264,23 @@ interface PocketDao {
     @Transaction
     suspend fun createLoanAtomically(loan: LoanEntity): Long {
         val loanId = insertLoan(loan)
-        insertLoanActivity(
-            LoanActivityEntity(
-                loanId = loanId,
-                activityType = LoanActivityType.DISBURSEMENT.name,
-                principalPortion = loan.principalAmount,
-                interestPortion = 0.0,
-                walletId = loan.initialWalletId,
-                date = loan.startDate,
-                note = if (loan.direction == LoanDirection.LENT.name) {
-                    "Initial loan lent to ${loan.personName}"
-                } else {
-                    "Initial loan borrowed from ${loan.personName}"
-                }
+        if (loan.initialWalletId != null && loan.initialWalletId > 0L) {
+            insertLoanActivity(
+                LoanActivityEntity(
+                    loanId = loanId,
+                    activityType = LoanActivityType.DISBURSEMENT.name,
+                    principalPortion = loan.principalAmount,
+                    interestPortion = 0.0,
+                    walletId = loan.initialWalletId,
+                    date = loan.startDate,
+                    note = if (loan.direction == LoanDirection.LENT.name) {
+                        "Initial loan lent to ${loan.personName}"
+                    } else {
+                        "Initial loan borrowed from ${loan.personName}"
+                    }
+                )
             )
-        )
+        }
         return loanId
     }
 
@@ -294,7 +296,7 @@ interface PocketDao {
             deleteTransactionsByLoanActivityId(activity.id)
             insertLoanActivity(activity)
         }
-        if (activity.interestPortion > 0.0) {
+        if (activity.interestPortion > 0.0 && activity.walletId != null && activity.walletId > 0L) {
             val isLent = loan.direction == LoanDirection.LENT.name
             insertTransaction(
                 TransactionEntity(

@@ -1104,7 +1104,8 @@ val WalletIconPickerOptions = listOf(
     WalletIconOption("ROCKET", "Rocket", "#8C3494", R.drawable.wallet_icon_rocket),
     WalletIconOption("RAPID_PASS", "Rapid Pass", "#1E3A8A", R.drawable.wallet_icon_rapid_pass),
     WalletIconOption("CARD", "Card", "#DC2626", R.drawable.wallet_icon_card),
-    WalletIconOption("SAVINGS", "Savings", "#F15A24", R.drawable.wallet_icon_savings)
+    WalletIconOption("SAVINGS", "Savings", "#F15A24", R.drawable.wallet_icon_savings),
+    WalletIconOption("FUND", "Fund", "#0EA5E9", R.drawable.wallet_icon_savings)
 )
 
 val AvailableIconNames = listOf(
@@ -1164,6 +1165,7 @@ fun iconForName(name: String): ImageVector {
         "PHONE_ANDROID", "BKASH", "NAGAD" -> Icons.Default.PhoneAndroid
         "ROCKET" -> Icons.Default.RocketLaunch
         "SAVINGS" -> Icons.Default.Savings
+        "FUND", "BUSINESS_CENTER" -> Icons.Default.BusinessCenter
         "CREDIT_CARD", "CARD" -> Icons.Default.CreditCard
         "RESTAURANT" -> Icons.Default.Restaurant
         "SHOPPING_BASKET" -> Icons.Default.ShoppingBasket
@@ -2419,9 +2421,7 @@ fun hasMathOperators(raw: String): Boolean {
     return body.any { it == '+' || it == '-' || it == '×' || it == '÷' || it == '*' || it == '/' }
 }
 
-/**
- * Compact inline operator bar (+, -, ×, ÷, =) and live evaluated preview for Amount fields.
- */
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun MiniCalculatorBar(
     expression: String = "",
@@ -2430,88 +2430,7 @@ fun MiniCalculatorBar(
     onExpressionChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val pocketColors = LocalPocketColors.current
-    val view = LocalView.current
-    val evaluated = remember(expressionText) { evaluateMathExpression(expressionText) }
-    val showLivePreview = remember(expressionText, evaluated) {
-        hasMathOperators(expressionText) && evaluated != null
-    }
-
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        val operators = listOf("+", "-", "×", "÷")
-        operators.forEach { op ->
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = pocketColors.surfaceElevated,
-                border = BorderStroke(1.dp, pocketColors.cardBorder),
-                modifier = Modifier
-                    .height(32.dp)
-                    .clickable {
-                        performPocketHaptic(view)
-                        val trimmed = expressionText.trimEnd()
-                        if (trimmed.isNotEmpty()) {
-                            val lastChar = trimmed.last()
-                            val next = if (lastChar in listOf('+', '-', '×', '÷', '*', '/')) {
-                                trimmed.dropLast(1).trimEnd() + " $op "
-                            } else {
-                                "$trimmed $op "
-                            }
-                            onExpressionChange(next)
-                        }
-                    }
-                    .testTag("calc_op_$op")
-            ) {
-                Box(
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = op,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-
-        if (showLivePreview && evaluated != null) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
-                modifier = Modifier
-                    .height(32.dp)
-                    .clickable {
-                        performPocketHaptic(view)
-                        val formatted = if (evaluated % 1.0 == 0.0) {
-                            evaluated.toLong().toString()
-                        } else {
-                            evaluated.toString()
-                        }
-                        onExpressionChange(formatted)
-                    }
-                    .testTag("calc_equals_button")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "= ${AccountingEngine.formatMoney(evaluated, currencySymbol)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-        }
-    }
+    // Removed per user request: no +-×÷ operator bar below number fields anywhere in the app
 }
 
 /**

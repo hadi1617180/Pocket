@@ -498,6 +498,10 @@ fun PocketApp(viewModel: PocketViewModel) {
                             uiState = uiState,
                             viewModel = viewModel
                         )
+                        is PocketScreen.FundFeatureGuide -> FundFeatureGuideScreen(
+                            uiState = uiState,
+                            viewModel = viewModel
+                        )
                     }
                 }
 

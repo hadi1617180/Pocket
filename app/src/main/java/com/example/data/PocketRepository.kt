@@ -19,7 +19,8 @@ data class StarterLoanInput(
     val direction: LoanDirection,
     val principalAmount: Double,
     val walletName: String = "",
-    val dueDate: Long? = null
+    val dueDate: Long? = null,
+    val note: String = ""
 )
 
 class PocketRepository(private val dao: PocketDao) {
@@ -347,7 +348,7 @@ class PocketRepository(private val dao: PocketDao) {
                                 initialWalletId = targetWId,
                                 startDate = now,
                                 dueDate = sl.dueDate,
-                                note = "Existing loan added during setup"
+                                note = sl.note.ifBlank { "Existing loan added during setup" }
                             )
                         )
                     }
@@ -417,7 +418,7 @@ class PocketRepository(private val dao: PocketDao) {
                             initialWalletId = targetWId,
                             startDate = now,
                             dueDate = sl.dueDate,
-                            note = "Existing loan"
+                            note = sl.note.ifBlank { "Existing loan" }
                         )
                     )
                 }
@@ -1343,9 +1344,9 @@ class PocketRepository(private val dao: PocketDao) {
             currencySymbol = "৳",
             themeMode = themeMode.ifBlank { existing?.themeMode ?: "DARK" },
             accentColorHex = accentColorHex.ifBlank { existing?.accentColorHex ?: "#F15A24" },
-            boxColorHex = existing?.boxColorHex ?: "",
+            boxColorHex = existing?.boxColorHex?.ifBlank { "#2A2A2A" } ?: "#2A2A2A",
             boxOpacity = existing?.boxOpacity ?: 0.50f,
-            backgroundOpacity = existing?.backgroundOpacity ?: 0.85f,
+            backgroundOpacity = existing?.backgroundOpacity ?: 0.20f,
             dateFormatPattern = "dd MMM yyyy",
             hasCompletedOnboarding = !resetOnboardingToFalse,
             userName = userName.trim(),
@@ -1455,7 +1456,11 @@ class PocketRepository(private val dao: PocketDao) {
         var nextLoanId = (mergedLoans.maxOfOrNull { it.id } ?: 0L) + 1L
         val loanIdMap = mutableMapOf<Long, Long>()
         for (localLoan in local.loans) {
-            val mappedWalletId = walletIdMap[localLoan.initialWalletId] ?: fallbackWalletId
+            val mappedWalletId = if (localLoan.initialWalletId == null || localLoan.initialWalletId <= 0L) {
+                null
+            } else {
+                walletIdMap[localLoan.initialWalletId] ?: fallbackWalletId
+            }
             val match = mergedLoans.firstOrNull {
                 it.personName.trim().equals(localLoan.personName.trim(), ignoreCase = true) &&
                     it.direction == localLoan.direction &&
@@ -1477,7 +1482,11 @@ class PocketRepository(private val dao: PocketDao) {
         val loanActivityIdMap = mutableMapOf<Long, Long>()
         for (localLa in local.loanActivities) {
             val mappedLoanId = loanIdMap[localLa.loanId] ?: continue
-            val mappedWalletId = walletIdMap[localLa.walletId] ?: fallbackWalletId
+            val mappedWalletId = if (localLa.walletId == null || localLa.walletId <= 0L) {
+                null
+            } else {
+                walletIdMap[localLa.walletId] ?: fallbackWalletId
+            }
             val match = mergedLoanActivities.firstOrNull {
                 it.loanId == mappedLoanId &&
                     it.activityType == localLa.activityType &&
@@ -1502,7 +1511,9 @@ class PocketRepository(private val dao: PocketDao) {
         for (localTr in local.transfers) {
             val mappedSrc = walletIdMap[localTr.sourceWalletId] ?: fallbackWalletId
             val mappedDst = walletIdMap[localTr.destinationWalletId] ?: fallbackWalletId
-            if (mappedSrc == mappedDst) continue
+            val isInternalFundMove = localTr.note.contains("[FUND_RETURN]", ignoreCase = true) ||
+                localTr.note.contains("[FUND_BORROW]", ignoreCase = true)
+            if (mappedSrc == mappedDst && !isInternalFundMove) continue
             val match = mergedTransfers.firstOrNull {
                 it.sourceWalletId == mappedSrc &&
                     it.destinationWalletId == mappedDst &&
@@ -1630,7 +1641,8 @@ class PocketRepository(private val dao: PocketDao) {
             subscriptionTier = if (preferLocalSubscription) local.settings.subscriptionTier else remote.settings.subscriptionTier,
             subscriptionExpiresAt = if (preferLocalSubscription) local.settings.subscriptionExpiresAt else remote.settings.subscriptionExpiresAt,
             activationCode = local.settings.activationCode.ifBlank { remote.settings.activationCode },
-            appLanguage = local.settings.appLanguage.ifBlank { remote.settings.appLanguage.ifBlank { "EN" } }
+            appLanguage = local.settings.appLanguage.ifBlank { remote.settings.appLanguage.ifBlank { "EN" } },
+            fundFeatureEnabled = local.settings.fundFeatureEnabled || remote.settings.fundFeatureEnabled
         )
 
         return PocketBackupPayload(
