@@ -112,6 +112,67 @@ fun TransactionFormScreen(
     var validationError by remember { mutableStateOf<String?>(null) }
     var showExpenseFundDropdown by remember { mutableStateOf(false) }
     val view = LocalView.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val transportPrefs = remember(context) {
+        context.getSharedPreferences("pocket_transport_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    val defaultRideModes = remember {
+        listOf("Rickshaw", "Bike", "Car", "CNG", "Bus", "Plane")
+    }
+    val rideModes = remember(transportPrefs) {
+        val raw = transportPrefs.getString("ride_modes_list", null)
+        val initialList = if (raw == null) {
+            defaultRideModes
+        } else {
+            raw.split("|").map { it.trim() }.filter { it.isNotBlank() }
+        }
+        mutableStateListOf<String>().apply { addAll(initialList) }
+    }
+    fun persistRideModes() {
+        transportPrefs.edit().putString("ride_modes_list", rideModes.joinToString("|")).apply()
+    }
+
+    val initialParsedTransport = remember(existingTx?.id) {
+        val existingNote = existingTx?.note?.trim().orEmpty()
+        val match = Regex("^(.*?)\\s+to\\s+(.*?)\\s+by\\s+(.*)$", RegexOption.IGNORE_CASE).matchEntire(existingNote)
+        if (match != null) {
+            Triple(
+                match.groupValues[1].trim(),
+                match.groupValues[2].trim(),
+                match.groupValues[3].trim()
+            )
+        } else {
+            Triple("", "", "")
+        }
+    }
+    var transportFrom by remember(existingTx?.id) { mutableStateOf(initialParsedTransport.first) }
+    var transportTo by remember(existingTx?.id) { mutableStateOf(initialParsedTransport.second) }
+    var selectedRide by remember(existingTx?.id) { mutableStateOf(initialParsedTransport.third) }
+    var showRideDropdown by remember { mutableStateOf(false) }
+    var showRideDialog by remember { mutableStateOf(false) }
+    var editingRideOriginalName by remember { mutableStateOf<String?>(null) }
+    var rideDialogInputText by remember { mutableStateOf("") }
+
+    fun updateTransportAutofillNote(fromVal: String, toVal: String, rideVal: String) {
+        val f = capitalizeFirstLetter(fromVal.trim())
+        val t = capitalizeFirstLetter(toVal.trim())
+        val r = capitalizeFirstLetter(rideVal.trim())
+        noteText = when {
+            f.isNotBlank() && t.isNotBlank() && r.isNotBlank() -> "$f to $t by $r"
+            f.isNotBlank() && t.isNotBlank() -> "$f to $t"
+            f.isNotBlank() && r.isNotBlank() -> "From $f by $r"
+            t.isNotBlank() && r.isNotBlank() -> "To $t by $r"
+            r.isNotBlank() -> "By $r"
+            f.isNotBlank() -> "From $f"
+            t.isNotBlank() -> "To $t"
+            else -> ""
+        }
+    }
+
+    val selectedCategory = filteredCategories.firstOrNull { it.id == selectedCategoryId }
+    val isTransportExpense = selectedType == TransactionType.EXPENSE &&
+        selectedCategory?.name?.trim()?.equals("Transport", ignoreCase = true) == true
 
     val selectedWalletSummary = activeWallets.firstOrNull { it.wallet.id == selectedWalletId }
     val selectedWalletCurrency = selectedWalletSummary?.wallet?.currency?.ifBlank { "BDT" }?.uppercase() ?: "BDT"
@@ -131,16 +192,15 @@ fun TransactionFormScreen(
     val parsedAmount = remember(amountText) {
         evaluateMathExpression(amountText) ?: amountText.toDoubleOrNull() ?: 0.0
     }
-    val isSplitFundWalletSelected = uiState.isFundEnabled &&
-        selectedWalletSummary?.hasVirtualFund == true &&
-        selectedWalletSummary.wallet.isFundWallet != true
+    val isFundSubWalletSelected = uiState.isFundEnabled &&
+        (txFundMode == "FUND_IN" || txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW")
 
-    val availableWalletBalanceForCheck = remember(selectedWalletSummary, existingTx, selectedWalletId, txFundMode, isSplitFundWalletSelected) {
+    val availableWalletBalanceForCheck = remember(selectedWalletSummary, existingTx, selectedWalletId, txFundMode, uiState.isFundEnabled) {
         val baseBal = when {
             selectedWalletSummary == null -> 0.0
-            isSplitFundWalletSelected && (txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW") ->
+            uiState.isFundEnabled && (txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW") ->
                 selectedWalletSummary.fundBalance
-            isSplitFundWalletSelected ->
+            uiState.isFundEnabled ->
                 selectedWalletSummary.personalBalance
             else ->
                 selectedWalletSummary.currentBalance
@@ -162,7 +222,7 @@ fun TransactionFormScreen(
 
     val pocketColors = LocalPocketColors.current
     val formBlur by animateDpAsState(
-        targetValue = if (showInlineCategoryDialog) 12.dp else 0.dp,
+        targetValue = if (showInlineCategoryDialog || showRideDialog) 12.dp else 0.dp,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "tx_form_blur"
     )
@@ -339,7 +399,228 @@ fun TransactionFormScreen(
                     }
                 }
 
-                // ii. Amount (larger number field & larger font size)
+                // ii. Category (right below Date, with "New category" card at the end of the category list)
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Category",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(filteredCategories, key = { it.id }) { cat ->
+                                FilterChip(
+                                    selected = cat.id == selectedCategoryId,
+                                    onClick = { selectedCategoryId = cat.id },
+                                    label = { Text(cat.name) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = iconForName(cat.iconName),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("select_category_chip_${cat.name}")
+                                )
+                            }
+                            item(key = "new_category_card") {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = {
+                                        val customCount = SubscriptionManager.countCustomCategories(uiState.categories)
+                                        val s = uiState.settings
+                                        if (!SubscriptionManager.canAddCategory(customCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
+                                            viewModel.showUpgradeDialog("Free tier allows 1 new custom category. Upgrade to Pocket Premium for unlimited categories.")
+                                        } else {
+                                            showInlineCategoryDialog = true
+                                        }
+                                    },
+                                    label = { Text("New category") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("inline_add_category_button")
+                                )
+                            }
+                        }
+
+                        // Transport Category Minimal Fields: 1. From, 2. To, and 1 Dropdown (Ride)
+                        AnimatedVisibility(visible = isTransportExpense) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = transportFrom,
+                                    onValueChange = { updated ->
+                                        val formatted = capitalizeFirstLetter(updated)
+                                        transportFrom = formatted
+                                        updateTransportAutofillNote(formatted, transportTo, selectedRide)
+                                    },
+                                    label = { Text("From", style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium,
+                                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("transport_from_input")
+                                )
+                                OutlinedTextField(
+                                    value = transportTo,
+                                    onValueChange = { updated ->
+                                        val formatted = capitalizeFirstLetter(updated)
+                                        transportTo = formatted
+                                        updateTransportAutofillNote(transportFrom, formatted, selectedRide)
+                                    },
+                                    label = { Text("To", style = MaterialTheme.typography.labelSmall) },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium,
+                                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("transport_to_input")
+                                )
+                                Box(modifier = Modifier.weight(1.05f)) {
+                                    OutlinedTextField(
+                                        value = selectedRide,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text("Ride", style = MaterialTheme.typography.labelSmall) },
+                                        placeholder = { Text("Select", style = MaterialTheme.typography.bodySmall) },
+                                        singleLine = true,
+                                        textStyle = MaterialTheme.typography.bodyMedium,
+                                        trailingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowDropDown,
+                                                contentDescription = "Select Ride",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .padding(top = 6.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable { showRideDropdown = true }
+                                            .testTag("transport_ride_dropdown")
+                                    )
+                                    DropdownMenu(
+                                        expanded = showRideDropdown,
+                                        onDismissRequest = { showRideDropdown = false },
+                                        modifier = Modifier.widthIn(min = 210.dp)
+                                    ) {
+                                        rideModes.forEach { rideOption ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = rideOption,
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            fontWeight = if (selectedRide.equals(rideOption, ignoreCase = true)) {
+                                                                FontWeight.Bold
+                                                            } else {
+                                                                FontWeight.Normal
+                                                            },
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                        Row(
+                                                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            IconButton(
+                                                                onClick = {
+                                                                    showRideDropdown = false
+                                                                    editingRideOriginalName = rideOption
+                                                                    rideDialogInputText = rideOption
+                                                                    showRideDialog = true
+                                                                },
+                                                                modifier = Modifier
+                                                                    .size(28.dp)
+                                                                    .testTag("edit_ride_mode_$rideOption")
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Edit,
+                                                                    contentDescription = "Edit $rideOption",
+                                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                    modifier = Modifier.size(15.dp)
+                                                                )
+                                                            }
+                                                            IconButton(
+                                                                onClick = {
+                                                                    rideModes.remove(rideOption)
+                                                                    persistRideModes()
+                                                                    if (selectedRide.equals(rideOption, ignoreCase = true)) {
+                                                                        selectedRide = ""
+                                                                        updateTransportAutofillNote(transportFrom, transportTo, "")
+                                                                    }
+                                                                },
+                                                                modifier = Modifier
+                                                                    .size(28.dp)
+                                                                    .testTag("delete_ride_mode_$rideOption")
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.DeleteOutline,
+                                                                    contentDescription = "Delete $rideOption",
+                                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
+                                                                    modifier = Modifier.size(15.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                onClick = {
+                                                    selectedRide = rideOption
+                                                    showRideDropdown = false
+                                                    updateTransportAutofillNote(transportFrom, transportTo, rideOption)
+                                                },
+                                                modifier = Modifier.testTag("ride_option_$rideOption")
+                                            )
+                                        }
+                                        HorizontalDivider(color = pocketColors.cardBorder.copy(alpha = 0.6f))
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = "+ Add new ride",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            },
+                                            onClick = {
+                                                showRideDropdown = false
+                                                editingRideOriginalName = null
+                                                rideDialogInputText = ""
+                                                showRideDialog = true
+                                            },
+                                            modifier = Modifier.testTag("add_new_ride_dropdown_item")
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // iii. Amount (larger number field & larger font size)
                 item {
                     MathAmountTextField(
                         value = amountText,
@@ -368,7 +649,7 @@ fun TransactionFormScreen(
                     )
                 }
 
-                // iii. Source/Note (Optional)
+                // iv. Note (Optional)
                 item {
                     val recentMerchants = remember(uiState.transactions, selectedType) {
                         val targetType = if (selectedType == TransactionType.INCOME) {
@@ -415,7 +696,7 @@ fun TransactionFormScreen(
                                 }
                             },
                             label = {
-                                Text("Source / Note (Optional)")
+                                Text("Note (Optional)")
                             },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -461,215 +742,173 @@ fun TransactionFormScreen(
                     }
                 }
 
-                // iv. Destination Wallet (with right-side Toggle for Add Income, or Dropdown for Add Expense)
+                // v. Destination Wallet + Sub-Wallet (<Wallet>-Personal / <Wallet>-Fund) Cards + Option 1 Borrow Selector
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             text = "Destination Wallet",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        if (uiState.isFundEnabled) {
-                            if (selectedType == TransactionType.INCOME) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(activeWallets, key = { "wallet_${it.wallet.id}" }) { summary ->
+                                val isSelected = summary.wallet.id == selectedWalletId
+                                val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { selectedWalletId = summary.wallet.id },
+                                    label = {
+                                        Text(
+                                            "${summary.wallet.name} (${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)})"
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("select_wallet_chip_${summary.wallet.name}")
+                                )
+                            }
+                        }
+
+                        if (uiState.isFundEnabled && selectedWalletSummary != null) {
+                            SubWalletSelectorCards(
+                                walletSummary = selectedWalletSummary,
+                                selectedIsFund = isFundSubWalletSelected,
+                                onSelectSubWallet = { chooseFund ->
+                                    txFundMode = if (!chooseFund) {
+                                        "PERSONAL"
+                                    } else if (selectedType == TransactionType.INCOME) {
+                                        "FUND_IN"
+                                    } else {
+                                        if (txFundMode == "FUND_BORROW") "FUND_BORROW" else "FUND_EXPENSE"
+                                    }
+                                },
+                                testTagPrefix = "tx_form",
+                                hideBalances = uiState.settings.hideBalancesPrivacy
+                            )
+
+                            // Option 1: When <Wallet>-Fund is selected in Add Expense, show Official Fund Expense vs Borrow for Personal
+                            AnimatedVisibility(visible = selectedType == TransactionType.EXPENSE && isFundSubWalletSelected) {
+                                val wName = selectedWalletSummary.wallet.name
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = pocketColors.surfaceElevated,
+                                    border = BorderStroke(1.dp, pocketColors.cardBorder),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(
-                                        text = "Add to Fund",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = if (txFundMode == "FUND_IN") {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
-                                        fontWeight = if (txFundMode == "FUND_IN") FontWeight.SemiBold else FontWeight.Normal
-                                    )
-                                    Switch(
-                                        checked = txFundMode == "FUND_IN",
-                                        onCheckedChange = { isChecked ->
-                                            txFundMode = if (isChecked) "FUND_IN" else "PERSONAL"
-                                        },
-                                        modifier = Modifier.testTag("income_mode_add_to_fund_chip")
-                                    )
-                                }
-                            } else {
-                                val selectedModeLabel = when (txFundMode) {
-                                    "FUND_EXPENSE" -> "Fund Expense"
-                                    "FUND_BORROW" -> "Borrow from fund"
-                                    else -> "Personal"
-                                }
-                                Box {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                                        border = BorderStroke(1.dp, pocketColors.cardBorder),
+                                    Column(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .clickable { showExpenseFundDropdown = true }
-                                            .testTag("expense_fund_mode_dropdown")
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
+                                        Text(
+                                            text = "$wName-Fund Expense Type",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                         Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Text(
-                                                text = selectedModeLabel,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = if (txFundMode == "PERSONAL") {
-                                                    MaterialTheme.colorScheme.onSurface
-                                                } else {
-                                                    MaterialTheme.colorScheme.primary
+                                            val isOfficial = txFundMode == "FUND_EXPENSE"
+                                            val isBorrow = txFundMode == "FUND_BORROW"
+                                            Surface(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable { txFundMode = "FUND_EXPENSE" }
+                                                    .testTag("fund_expense_regular_chip"),
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (isOfficial) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (isOfficial) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
+                                                )
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Official Fund Expense",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isOfficial) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = "Deducts from $wName-Fund",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
                                                 }
-                                            )
-                                            Icon(
-                                                imageVector = Icons.Default.ArrowDropDown,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(18.dp)
-                                            )
+                                            }
+                                            Surface(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable { txFundMode = "FUND_BORROW" }
+                                                    .testTag("fund_expense_personal_borrow_chip"),
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (isBorrow) pocketColors.expenseText.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface,
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (isBorrow) pocketColors.expenseText else pocketColors.cardBorder
+                                                )
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Borrow for Personal",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isBorrow) pocketColors.expenseText else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = "Adds to Borrowed Due",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = if (isBorrow) pocketColors.expenseText else MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
-                                    DropdownMenu(
-                                        expanded = showExpenseFundDropdown,
-                                        onDismissRequest = { showExpenseFundDropdown = false }
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("Personal") },
-                                            onClick = {
-                                                txFundMode = "PERSONAL"
-                                                showExpenseFundDropdown = false
-                                            },
-                                            modifier = Modifier.testTag("fund_expense_personal_chip")
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Fund Expense") },
-                                            onClick = {
-                                                txFundMode = "FUND_EXPENSE"
-                                                showExpenseFundDropdown = false
-                                            },
-                                            modifier = Modifier.testTag("fund_expense_regular_chip")
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Borrow from fund") },
-                                            onClick = {
-                                                txFundMode = "FUND_BORROW"
-                                                showExpenseFundDropdown = false
-                                            },
-                                            modifier = Modifier.testTag("fund_expense_personal_borrow_chip")
-                                        )
-                                    }
                                 }
                             }
                         }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(activeWallets, key = { "wallet_${it.wallet.id}" }) { summary ->
-                            val isSelected = summary.wallet.id == selectedWalletId
-                            val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { selectedWalletId = summary.wallet.id },
-                                label = {
-                                    Text(
-                                        "${summary.wallet.name} (${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)})"
-                                    )
-                                },
-                                modifier = Modifier
-                                    .heightIn(min = 48.dp)
-                                    .testTag("select_wallet_chip_${summary.wallet.name}")
-                            )
-                        }
-                    }
 
-                    if (willBecomeNegative && uiState.settings.warnOnNegativeBalance) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val balanceBucketLabel = when {
-                            isSplitFundWalletSelected && (txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW") -> "available Fund balance"
-                            isSplitFundWalletSelected -> "available Personal balance"
-                            else -> "available balance"
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = pocketColors.expenseContainer,
-                            border = BorderStroke(1.dp, pocketColors.expenseText.copy(alpha = 0.4f))
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.WarningAmber,
-                                    contentDescription = null,
-                                    tint = pocketColors.expenseText
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = "Heads up: This expense exceeds ${selectedWalletSummary?.wallet?.name}'s $balanceBucketLabel (${AccountingEngine.formatMoney(availableWalletBalanceForCheck, symbol)}) and will result in a negative balance.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = pocketColors.expenseText
-                                )
+                        if (willBecomeNegative && uiState.settings.warnOnNegativeBalance) {
+                            val wName = selectedWalletSummary?.wallet?.name ?: "Wallet"
+                            val balanceBucketLabel = when {
+                                uiState.isFundEnabled && isFundSubWalletSelected -> "$wName-Fund balance"
+                                uiState.isFundEnabled -> "$wName-Personal balance"
+                                else -> "available balance"
                             }
-                        }
-                    }
-                }
-
-                // v. Category (with "New category" card at the end of the category list)
-                item {
-                    Text(
-                        text = "Category",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(filteredCategories, key = { it.id }) { cat ->
-                            FilterChip(
-                                selected = cat.id == selectedCategoryId,
-                                onClick = { selectedCategoryId = cat.id },
-                                label = { Text(cat.name) },
-                                leadingIcon = {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = pocketColors.expenseContainer,
+                                border = BorderStroke(1.dp, pocketColors.expenseText.copy(alpha = 0.4f))
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Icon(
-                                        imageVector = iconForName(cat.iconName),
+                                        imageVector = Icons.Default.WarningAmber,
                                         contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
+                                        tint = pocketColors.expenseText
                                     )
-                                },
-                                modifier = Modifier
-                                    .heightIn(min = 48.dp)
-                                    .testTag("select_category_chip_${cat.name}")
-                            )
-                        }
-                        item(key = "new_category_card") {
-                            FilterChip(
-                                selected = false,
-                                onClick = {
-                                    val customCount = SubscriptionManager.countCustomCategories(uiState.categories)
-                                    val s = uiState.settings
-                                    if (!SubscriptionManager.canAddCategory(customCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
-                                        viewModel.showUpgradeDialog("Free tier allows 1 new custom category. Upgrade to Pocket Premium for unlimited categories.")
-                                    } else {
-                                        showInlineCategoryDialog = true
-                                    }
-                                },
-                                label = { Text("New category") },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "Heads up: This expense exceeds $balanceBucketLabel (${AccountingEngine.formatMoney(availableWalletBalanceForCheck, symbol)}) and will result in a negative balance.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = pocketColors.expenseText
                                     )
-                                },
-                                modifier = Modifier
-                                    .heightIn(min = 48.dp)
-                                    .testTag("inline_add_category_button")
-                            )
+                                }
+                            }
                         }
                     }
                 }
@@ -787,6 +1026,9 @@ fun TransactionFormScreen(
                                         amountText = ""
                                         noteText = ""
                                         tagsText = ""
+                                        transportFrom = ""
+                                        transportTo = ""
+                                        selectedRide = ""
                                         txFundMode = "PERSONAL"
                                     }
                                 },
@@ -803,6 +1045,64 @@ fun TransactionFormScreen(
                 }
             }
         }
+    }
+
+    if (showRideDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showRideDialog = false
+                editingRideOriginalName = null
+            },
+            containerColor = pocketColors.overlaySurface,
+            text = {
+                OutlinedTextField(
+                    value = rideDialogInputText,
+                    onValueChange = { rideDialogInputText = capitalizeFirstLetter(it) },
+                    placeholder = { Text("Ride name") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("ride_dialog_input")
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cleaned = capitalizeFirstLetter(rideDialogInputText.trim())
+                        if (cleaned.isNotBlank()) {
+                            val orig = editingRideOriginalName
+                            if (orig != null) {
+                                val idx = rideModes.indexOfFirst { it.equals(orig, ignoreCase = true) }
+                                if (idx >= 0) {
+                                    rideModes[idx] = cleaned
+                                } else if (rideModes.none { it.equals(cleaned, ignoreCase = true) }) {
+                                    rideModes.add(cleaned)
+                                }
+                                persistRideModes()
+                                if (selectedRide.equals(orig, ignoreCase = true)) {
+                                    selectedRide = cleaned
+                                    updateTransportAutofillNote(transportFrom, transportTo, cleaned)
+                                }
+                            } else {
+                                val existingMatch = rideModes.firstOrNull { it.equals(cleaned, ignoreCase = true) }
+                                val chosen = existingMatch ?: cleaned.also {
+                                    rideModes.add(it)
+                                    persistRideModes()
+                                }
+                                selectedRide = chosen
+                                updateTransportAutofillNote(transportFrom, transportTo, chosen)
+                            }
+                            showRideDialog = false
+                            editingRideOriginalName = null
+                        }
+                    },
+                    modifier = Modifier.testTag("ride_dialog_confirm_button")
+                ) {
+                    Text(if (editingRideOriginalName != null) "Save" else "Add")
+                }
+            }
+        )
     }
 
     if (showInlineCategoryDialog) {
@@ -944,15 +1244,29 @@ fun TransferFormScreen(
             if ((existingTransfer?.percentageInput ?: 0.0) > 0.0) formatNumericFieldInitialValue(existingTransfer!!.percentageInput) else ""
         )
     }
-    var fundTransferMode by remember(existingTransfer) {
+    var sourceIsFund by remember(existingTransfer) {
         mutableStateOf(
+            existingTransfer?.note?.contains("[FUND_TRANSFER]", ignoreCase = true) == true ||
+                existingTransfer?.note?.contains("[FUND_BORROW]", ignoreCase = true) == true
+        )
+    }
+    var destIsFund by remember(existingTransfer) {
+        mutableStateOf(
+            existingTransfer?.note?.contains("[FUND_TRANSFER]", ignoreCase = true) == true ||
+                existingTransfer?.note?.contains("[FUND_RETURN]", ignoreCase = true) == true
+        )
+    }
+    val fundTransferMode = remember(uiState.isFundEnabled, sourceIsFund, destIsFund) {
+        if (!uiState.isFundEnabled) {
+            "REGULAR"
+        } else {
             when {
-                existingTransfer?.note?.contains("[FUND_TRANSFER]", ignoreCase = true) == true -> "FUND_TRANSFER"
-                existingTransfer?.note?.contains("[FUND_BORROW]", ignoreCase = true) == true -> "BORROW"
-                existingTransfer?.note?.contains("[FUND_RETURN]", ignoreCase = true) == true -> "RETURN"
+                sourceIsFund && destIsFund -> "FUND_TRANSFER"
+                sourceIsFund && !destIsFund -> "BORROW"
+                !sourceIsFund && destIsFund -> "RETURN"
                 else -> "REGULAR"
             }
-        )
+        }
     }
     var noteText by remember(existingTransfer) {
         mutableStateOf(
@@ -988,34 +1302,6 @@ fun TransferFormScreen(
     val totalSourceDebit = AccountingEngine.roundCurrency(principal + calculatedFee)
     val sourceSummary = wallets.firstOrNull { it.wallet.id == sourceWalletId }
     val destSummary = wallets.firstOrNull { it.wallet.id == destWalletId }
-    val isSourceDedicatedFund = sourceSummary?.wallet?.isFundWallet == true
-    val isDestDedicatedFund = destSummary?.wallet?.isFundWallet == true
-    val isSourceFund = isSourceDedicatedFund || (sourceSummary?.fundBalance ?: 0.0) > 0.005
-    val isDestFund = isDestDedicatedFund || (destSummary?.fundBalance ?: 0.0) > 0.005
-    LaunchedEffect(sourceWalletId, destWalletId) {
-        if (existingTransfer == null) {
-            val srcW = wallets.firstOrNull { it.wallet.id == sourceWalletId }
-            val dstW = wallets.firstOrNull { it.wallet.id == destWalletId }
-            when {
-                srcW?.wallet?.isFundWallet == true -> {
-                    if (fundTransferMode != "BORROW") {
-                        fundTransferMode = "FUND_TRANSFER"
-                    }
-                }
-                dstW?.wallet?.isFundWallet == true && uiState.totalFundBorrowedDue > 0.005 && (srcW?.fundBalance ?: 0.0) <= 0.005 -> {
-                    fundTransferMode = "RETURN"
-                }
-                dstW?.wallet?.isFundWallet == true && (srcW?.fundBalance ?: 0.0) > 0.005 -> {
-                    fundTransferMode = "FUND_TRANSFER"
-                }
-                else -> {
-                    if (fundTransferMode == "FUND_TRANSFER" && (srcW?.fundBalance ?: 0.0) <= 0.005 && dstW?.wallet?.isFundWallet != true) {
-                        fundTransferMode = "REGULAR"
-                    }
-                }
-            }
-        }
-    }
     val sourceCurrency = sourceSummary?.wallet?.currency?.ifBlank { "BDT" }?.uppercase() ?: "BDT"
     val destCurrency = destSummary?.wallet?.currency?.ifBlank { "BDT" }?.uppercase() ?: "BDT"
     val sourceSymbol = AccountingEngine.currencySymbolForCode(sourceCurrency)
@@ -1076,8 +1362,13 @@ fun TransferFormScreen(
         }
     }
 
-    val availableSourceBeforeEdit = remember(sourceSummary, existingTransfer, sourceWalletId) {
-        val currentBal = sourceSummary?.currentBalance ?: 0.0
+    val availableSourceBeforeEdit = remember(sourceSummary, existingTransfer, sourceWalletId, uiState.isFundEnabled, sourceIsFund) {
+        val currentBal = when {
+            sourceSummary == null -> 0.0
+            uiState.isFundEnabled && sourceIsFund -> sourceSummary.fundBalance
+            uiState.isFundEnabled -> sourceSummary.personalBalance
+            else -> sourceSummary.currentBalance
+        }
         when {
             existingTransfer == null -> currentBal
             existingTransfer.sourceWalletId == sourceWalletId ->
@@ -1099,11 +1390,17 @@ fun TransferFormScreen(
         (fundTransferMode == "RETURN" || fundTransferMode == "BORROW")
 
     fun handleConfirmTransfer() {
+        val srcWName = sourceSummary?.wallet?.name ?: "Source"
+        val dstWName = destSummary?.wallet?.name ?: "Destination"
         when {
             sourceWalletId == 0L || destWalletId == 0L ->
                 validationError = "Please select both source and destination wallets."
             sourceWalletId == destWalletId && !isSameWalletInternalFundAllowed ->
-                validationError = "Source and destination wallets must differ."
+                validationError = if (uiState.isFundEnabled) {
+                    "For same-wallet transfer ($srcWName), select Personal on one side and Fund on the other."
+                } else {
+                    "Source and destination wallets must differ."
+                }
             principal <= 0.0 ->
                 validationError = "Transfer amount must be greater than zero."
             isCrossCurrency && effectiveDestCredit <= 0.0 ->
@@ -1112,20 +1409,13 @@ fun TransferFormScreen(
                 validationError = "Transfer fee cannot be negative."
             else -> {
                 performPocketHaptic(view)
-                val effectiveSaveMode = if (!uiState.isFundEnabled) {
-                    "REGULAR"
-                } else if (isSourceDedicatedFund && fundTransferMode == "REGULAR") {
-                    "FUND_TRANSFER"
-                } else {
-                    fundTransferMode
-                }
                 val finalNote = when {
-                    uiState.isFundEnabled && (isSourceFund || isDestDedicatedFund) && effectiveSaveMode == "FUND_TRANSFER" ->
-                        if (noteText.isNotBlank()) "[FUND_TRANSFER] ${noteText.trim()}" else "[FUND_TRANSFER] Fund transfer from ${sourceSummary?.wallet?.name ?: "Source"} to ${destSummary?.wallet?.name ?: "Destination"}"
-                    uiState.isFundEnabled && isSourceFund && effectiveSaveMode == "BORROW" ->
-                        if (noteText.isNotBlank()) "[FUND_BORROW] ${noteText.trim()}" else "[FUND_BORROW] Personal borrow from ${sourceSummary?.wallet?.name ?: "Fund"}"
-                    uiState.isFundEnabled && effectiveSaveMode == "RETURN" ->
-                        if (noteText.isNotBlank()) "[FUND_RETURN] ${noteText.trim()}" else "[FUND_RETURN] Returned personal borrow to ${destSummary?.wallet?.name ?: "Fund"}"
+                    uiState.isFundEnabled && fundTransferMode == "FUND_TRANSFER" ->
+                        if (noteText.isNotBlank()) "[FUND_TRANSFER] ${noteText.trim()}" else "[FUND_TRANSFER] $srcWName-Fund → $dstWName-Fund"
+                    uiState.isFundEnabled && fundTransferMode == "BORROW" ->
+                        if (noteText.isNotBlank()) "[FUND_BORROW] ${noteText.trim()}" else "[FUND_BORROW] Borrowed from $srcWName-Fund to $dstWName-Personal"
+                    uiState.isFundEnabled && fundTransferMode == "RETURN" ->
+                        if (noteText.isNotBlank()) "[FUND_RETURN] ${noteText.trim()}" else "[FUND_RETURN] Returned from $srcWName-Personal to $dstWName-Fund"
                     else -> noteText.trim()
                 }
                 viewModel.saveTransfer(
@@ -1143,8 +1433,8 @@ fun TransferFormScreen(
                         date = selectedTransferDateMillis,
                         note = finalNote
                     ),
-                    sourceWalletName = sourceSummary?.wallet?.name ?: "Source",
-                    destWalletName = destSummary?.wallet?.name ?: "Destination"
+                    sourceWalletName = srcWName,
+                    destWalletName = dstWName
                 )
             }
         }
@@ -1195,7 +1485,7 @@ fun TransferFormScreen(
                 contentPadding = PaddingValues(bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // i. Date (no "Date" title, no Today/Yesterday chips — just current selected date in clickable calendar picker)
+                // i. Date
                 item {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -1232,134 +1522,134 @@ fun TransferFormScreen(
                     }
                 }
 
-                // ii. Source
+                // ii. Source Wallet + Sub-Wallet (<FromWallet>-Personal / <FromWallet>-Fund)
                 item {
-                    Text("Source", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(wallets, key = { it.wallet.id }) { summary ->
-                            val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
-                            FilterChip(
-                                selected = summary.wallet.id == sourceWalletId,
-                                onClick = {
-                                    sourceWalletId = summary.wallet.id
-                                    if (destWalletId == summary.wallet.id && !isSameWalletInternalFundAllowed) {
-                                        destWalletId = wallets.firstOrNull { it.wallet.id != sourceWalletId }?.wallet?.id ?: 0L
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Source", style = MaterialTheme.typography.titleMedium)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(wallets, key = { it.wallet.id }) { summary ->
+                                val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                                FilterChip(
+                                    selected = summary.wallet.id == sourceWalletId,
+                                    onClick = {
+                                        sourceWalletId = summary.wallet.id
+                                        if (!uiState.isFundEnabled && destWalletId == summary.wallet.id) {
+                                            destWalletId = wallets.firstOrNull { it.wallet.id != sourceWalletId }?.wallet?.id ?: 0L
+                                        }
+                                    },
+                                    label = {
+                                        Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)}")
+                                    },
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("transfer_from_wallet_${summary.wallet.name}")
+                                )
+                            }
+                        }
+                        if (uiState.isFundEnabled && sourceSummary != null) {
+                            SubWalletSelectorCards(
+                                walletSummary = sourceSummary,
+                                selectedIsFund = sourceIsFund,
+                                onSelectSubWallet = { chooseFund ->
+                                    sourceIsFund = chooseFund
+                                    // If same wallet is selected on both sides, automatically flip destination sub-wallet so it's valid
+                                    if (sourceWalletId == destWalletId && destIsFund == chooseFund) {
+                                        destIsFund = !chooseFund
                                     }
                                 },
-                                label = {
-                                    Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)}")
-                                },
-                                modifier = Modifier
-                                    .heightIn(min = 48.dp)
-                                    .testTag("transfer_from_wallet_${summary.wallet.name}")
+                                testTagPrefix = "transfer_source",
+                                hideBalances = uiState.settings.hideBalancesPrivacy
                             )
                         }
                     }
                 }
 
-                // iii. Destination
+                // iii. Destination Wallet + Sub-Wallet (<ToWallet>-Personal / <ToWallet>-Fund)
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Destination", style = MaterialTheme.typography.titleMedium)
-                        TextButton(
-                            onClick = {
-                                val tmp = sourceWalletId
-                                sourceWalletId = destWalletId
-                                destWalletId = tmp
-                            }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Swap")
-                        }
-                    }
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(wallets, key = { it.wallet.id }) { summary ->
-                            val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
-                            FilterChip(
-                                selected = summary.wallet.id == destWalletId,
-                                onClick = { destWalletId = summary.wallet.id },
-                                label = {
-                                    Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)}")
-                                },
-                                modifier = Modifier
-                                    .heightIn(min = 48.dp)
-                                    .testTag("transfer_to_wallet_${summary.wallet.name}")
-                            )
-                        }
-                    }
-
-                    AnimatedVisibility(visible = uiState.isFundEnabled && (isSourceFund || isDestFund || isDestDedicatedFund || uiState.totalFundBorrowedDue > 0.005)) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            LazyRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Text("Destination", style = MaterialTheme.typography.titleMedium)
+                            TextButton(
+                                onClick = {
+                                    val tmpW = sourceWalletId
+                                    sourceWalletId = destWalletId
+                                    destWalletId = tmpW
+                                    val tmpF = sourceIsFund
+                                    sourceIsFund = destIsFund
+                                    destIsFund = tmpF
+                                }
                             ) {
-                                if (!isSourceDedicatedFund && !isDestDedicatedFund && sourceWalletId != destWalletId) {
-                                    item {
-                                        FilterChip(
-                                            selected = fundTransferMode == "REGULAR",
-                                            onClick = { fundTransferMode = "REGULAR" },
-                                            label = { Text("Regular Transfer") },
-                                            modifier = Modifier
-                                                .heightIn(min = 44.dp)
-                                                .testTag("transfer_fund_mode_regular_chip")
-                                        )
+                                Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Swap")
+                            }
+                        }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(wallets, key = { it.wallet.id }) { summary ->
+                                val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                                FilterChip(
+                                    selected = summary.wallet.id == destWalletId,
+                                    onClick = {
+                                        destWalletId = summary.wallet.id
+                                        if (uiState.isFundEnabled && summary.wallet.id == sourceWalletId && destIsFund == sourceIsFund) {
+                                            destIsFund = !sourceIsFund
+                                        }
+                                    },
+                                    label = {
+                                        Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)}")
+                                    },
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("transfer_to_wallet_${summary.wallet.name}")
+                                )
+                            }
+                        }
+                        if (uiState.isFundEnabled && destSummary != null) {
+                            SubWalletSelectorCards(
+                                walletSummary = destSummary,
+                                selectedIsFund = destIsFund,
+                                onSelectSubWallet = { chooseFund ->
+                                    destIsFund = chooseFund
+                                    if (sourceWalletId == destWalletId && sourceIsFund == chooseFund) {
+                                        sourceIsFund = !chooseFund
                                     }
-                                }
-                                if ((isSourceFund || isDestDedicatedFund) && sourceWalletId != destWalletId) {
-                                    item {
-                                        FilterChip(
-                                            selected = fundTransferMode == "FUND_TRANSFER" || (isSourceDedicatedFund && fundTransferMode == "REGULAR"),
-                                            onClick = { fundTransferMode = "FUND_TRANSFER" },
-                                            label = { Text("Keep as Fund") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.BusinessCenter,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            },
-                                            modifier = Modifier
-                                                .heightIn(min = 44.dp)
-                                                .testTag("transfer_fund_mode_fund_transfer_chip")
-                                        )
-                                    }
-                                }
-                                if (isSourceFund && !isDestDedicatedFund) {
-                                    item {
-                                        FilterChip(
-                                            selected = fundTransferMode == "BORROW",
-                                            onClick = { fundTransferMode = "BORROW" },
-                                            label = { Text("Personal Borrow") },
-                                            modifier = Modifier
-                                                .heightIn(min = 44.dp)
-                                                .testTag("transfer_fund_mode_borrow_chip")
-                                        )
-                                    }
-                                }
-                                if (isDestDedicatedFund || isDestFund || uiState.totalFundBorrowedDue > 0.005) {
-                                    item {
-                                        FilterChip(
-                                            selected = fundTransferMode == "RETURN",
-                                            onClick = { fundTransferMode = "RETURN" },
-                                            label = { Text("Return to Fund") },
-                                            modifier = Modifier
-                                                .heightIn(min = 44.dp)
-                                                .testTag("transfer_fund_mode_return_chip")
-                                        )
-                                    }
-                                }
+                                },
+                                testTagPrefix = "transfer_dest",
+                                hideBalances = uiState.settings.hideBalancesPrivacy
+                            )
+
+                            val srcSubLabel = "${sourceSummary?.wallet?.name ?: "Source"}-${if (sourceIsFund) "Fund" else "Personal"}"
+                            val dstSubLabel = "${destSummary.wallet.name}-${if (destIsFund) "Fund" else "Personal"}"
+                            val modeDescription = when (fundTransferMode) {
+                                "FUND_TRANSFER" -> "$srcSubLabel → $dstSubLabel • Fund Transfer"
+                                "BORROW" -> "$srcSubLabel → $dstSubLabel • Borrow from Fund (Adds to Due)"
+                                "RETURN" -> "$srcSubLabel → $dstSubLabel • Return to Fund (Reduces Due)"
+                                else -> "$srcSubLabel → $dstSubLabel • Personal Transfer"
+                            }
+                            val modeColor = when (fundTransferMode) {
+                                "BORROW" -> pocketColors.expenseText
+                                "RETURN", "FUND_TRANSFER" -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = pocketColors.surfaceElevated,
+                                border = BorderStroke(1.dp, pocketColors.cardBorder),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("transfer_subwallet_mode_pill")
+                            ) {
+                                Text(
+                                    text = modeDescription,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = modeColor,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
                             }
                         }
                     }
@@ -1676,6 +1966,7 @@ fun TransactionHistoryScreen(
     var typeFilter by remember(initialTypeFilter) { mutableStateOf(initialTypeFilter) }
     var walletFilterId by remember(initialWalletId) { mutableStateOf(initialWalletId) }
     var categoryFilterId by remember(initialCategoryId) { mutableStateOf(initialCategoryId) }
+    var subWalletHistoryFilter by remember { mutableStateOf("ALL") } // ALL, PERSONAL, FUND
     var minAmountText by remember { mutableStateOf("") }
     var maxAmountText by remember { mutableStateOf("") }
     var showAdvancedFilters by remember { mutableStateOf(false) }
@@ -1722,6 +2013,7 @@ fun TransactionHistoryScreen(
         typeFilter,
         walletFilterId,
         categoryFilterId,
+        subWalletHistoryFilter,
         selectedTagFilter,
         minAmountText,
         maxAmountText,
@@ -1769,6 +2061,22 @@ fun TransactionHistoryScreen(
             val inType = typeFilter == null || e.kind == typeFilter
             val inWallet = walletFilterId == null || e.walletId == walletFilterId || e.secondaryWalletId == walletFilterId
             val inCat = categoryFilterId == null || e.categoryId == categoryFilterId
+            val isFundRelated = e.tags.contains("FUND_IN", ignoreCase = true) ||
+                e.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
+                e.tags.contains("FUND_BORROW", ignoreCase = true) ||
+                e.note.contains("[FUND_TRANSFER]", ignoreCase = true) ||
+                e.note.contains("[FUND_BORROW]", ignoreCase = true) ||
+                e.note.contains("[FUND_RETURN]", ignoreCase = true) ||
+                e.note.contains("[FUND_LOAN]", ignoreCase = true) ||
+                e.note.contains("-Fund", ignoreCase = true)
+            val isBorrowRelated = e.tags.contains("FUND_BORROW", ignoreCase = true) ||
+                e.note.contains("[FUND_BORROW]", ignoreCase = true) ||
+                e.note.contains("[FUND_RETURN]", ignoreCase = true)
+            val inSubWallet = when (subWalletHistoryFilter) {
+                "FUND" -> isFundRelated
+                "PERSONAL" -> !isFundRelated || isBorrowRelated
+                else -> true
+            }
             val inTag = selectedTagFilter == null || e.tags.split(",").any {
                 it.trim().removePrefix("#").equals(selectedTagFilter, ignoreCase = true)
             }
@@ -1788,7 +2096,7 @@ fun TransactionHistoryScreen(
                 e.reference.lowercase(Locale.ENGLISH).contains(rawQ) ||
                 e.tags.lowercase(Locale.ENGLISH).contains(rawQ) ||
                 absAmt.toString().contains(normQ)
-            inDate && inType && inWallet && inCat && inTag && inMin && inMax && inQuery
+            inDate && inType && inWallet && inCat && inSubWallet && inTag && inMin && inMax && inQuery
         }.sortedWith(compareByDescending<UnifiedLedgerEntry> { it.date }.thenByDescending { it.rawId })
     }
 
@@ -2009,11 +2317,40 @@ fun TransactionHistoryScreen(
                     }
                     item {
                         FilterChip(
-                            selected = typeFilter == null,
-                            onClick = { typeFilter = null },
+                            selected = typeFilter == null && subWalletHistoryFilter == "ALL",
+                            onClick = {
+                                typeFilter = null
+                                subWalletHistoryFilter = "ALL"
+                            },
                             label = { Text("All", style = MaterialTheme.typography.labelMedium) },
                             modifier = Modifier.heightIn(min = 36.dp)
                         )
+                    }
+                    if (uiState.isFundEnabled) {
+                        item {
+                            FilterChip(
+                                selected = subWalletHistoryFilter == "PERSONAL",
+                                onClick = {
+                                    subWalletHistoryFilter = if (subWalletHistoryFilter == "PERSONAL") "ALL" else "PERSONAL"
+                                },
+                                label = { Text("Personal", style = MaterialTheme.typography.labelMedium) },
+                                modifier = Modifier
+                                    .heightIn(min = 36.dp)
+                                    .testTag("history_subwallet_chip_personal")
+                            )
+                        }
+                        item {
+                            FilterChip(
+                                selected = subWalletHistoryFilter == "FUND",
+                                onClick = {
+                                    subWalletHistoryFilter = if (subWalletHistoryFilter == "FUND") "ALL" else "FUND"
+                                },
+                                label = { Text("Fund", style = MaterialTheme.typography.labelMedium) },
+                                modifier = Modifier
+                                    .heightIn(min = 36.dp)
+                                    .testTag("history_subwallet_chip_fund")
+                            )
+                        }
                     }
                     item {
                         FilterChip(

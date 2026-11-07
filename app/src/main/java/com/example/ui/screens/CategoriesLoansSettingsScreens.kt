@@ -1252,7 +1252,8 @@ fun LoansScreen(
                                 }
                             }
 
-                            if (summary.loan.note.isNotBlank()) {
+                            val cleanLoanNote = summary.loan.note.replace("[FUND_LOAN]", "", ignoreCase = true).trim()
+                            if (cleanLoanNote.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Surface(
                                     modifier = Modifier
@@ -1281,7 +1282,7 @@ fun LoansScreen(
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                             Text(
-                                                text = summary.loan.note,
+                                                text = cleanLoanNote,
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
@@ -1389,6 +1390,7 @@ fun LoansScreen(
         var showNewLoanDatePicker by remember { mutableStateOf(false) }
         var noteText by remember { mutableStateOf("") }
         var loanAttachmentUri by remember { mutableStateOf("") }
+        var createLoanIsFund by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showCreateLoanDialog = false },
@@ -1646,6 +1648,16 @@ fun LoansScreen(
                             }
                         }
                     }
+                    val selectedCreateLoanWalletSummary = uiState.activeWalletSummaries.firstOrNull { it.wallet.id == walletId }
+                    if (uiState.isFundEnabled && selectedCreateLoanWalletSummary != null) {
+                        SubWalletSelectorCards(
+                            walletSummary = selectedCreateLoanWalletSummary,
+                            selectedIsFund = createLoanIsFund,
+                            onSelectSubWallet = { createLoanIsFund = it },
+                            testTagPrefix = "create_loan",
+                            hideBalances = uiState.settings.hideBalancesPrivacy
+                        )
+                    }
                     OutlinedTextField(
                         value = noteText,
                         onValueChange = { noteText = capitalizeFirstLetter(it) },
@@ -1666,6 +1678,12 @@ fun LoansScreen(
                     onClick = {
                         val p = principalText.toDoubleOrNull() ?: 0.0
                         if (personName.isNotBlank() && p > 0.0) {
+                            val cleanNote = noteText.trim()
+                            val finalLoanNote = if (uiState.isFundEnabled && walletId > 0L && createLoanIsFund) {
+                                if (cleanNote.isNotBlank()) "[FUND_LOAN] $cleanNote" else "[FUND_LOAN]"
+                            } else {
+                                cleanNote
+                            }
                             viewModel.createLoan(
                                 LoanEntity(
                                     personName = personName.trim(),
@@ -1674,7 +1692,7 @@ fun LoansScreen(
                                     initialWalletId = if (walletId > 0L) walletId else null,
                                     startDate = loanStartDateMillis,
                                     dueDate = dueDateMillis,
-                                    note = noteText.trim(),
+                                    note = finalLoanNote,
                                     attachmentUri = loanAttachmentUri
                                 )
                             )
@@ -1754,6 +1772,9 @@ fun LoansScreen(
         var interestPortionText by remember { mutableStateOf("") }
         var repaymentWalletId by remember {
             mutableStateOf(liveSummary.loan.initialWalletId)
+        }
+        var repaymentIsFund by remember(liveSummary.loan.id) {
+            mutableStateOf(liveSummary.loan.note.contains("[FUND_LOAN]", ignoreCase = true))
         }
         var repaymentNote by remember { mutableStateOf("") }
         var allowOverRepayment by remember { mutableStateOf(false) }
@@ -1908,6 +1929,16 @@ fun LoansScreen(
                                 )
                             }
                         }
+                        val selectedRepaymentWalletSummary = uiState.activeWalletSummaries.firstOrNull { it.wallet.id == repaymentWalletId }
+                        if (uiState.isFundEnabled && selectedRepaymentWalletSummary != null) {
+                            SubWalletSelectorCards(
+                                walletSummary = selectedRepaymentWalletSummary,
+                                selectedIsFund = repaymentIsFund,
+                                onSelectSubWallet = { repaymentIsFund = it },
+                                testTagPrefix = "loan_repayment",
+                                hideBalances = uiState.settings.hideBalancesPrivacy
+                            )
+                        }
                         OutlinedTextField(
                             value = repaymentNote,
                             onValueChange = { repaymentNote = capitalizeFirstLetter(it) },
@@ -1934,6 +1965,7 @@ fun LoansScreen(
                                 ?.currency?.takeIf { it.isNotBlank() }
                                 ?.let { AccountingEngine.currencySymbolForCode(it) }
                         }) ?: loanSymbol
+                        val cleanActNote = act.note.replace("[FUND_LOAN]", "", ignoreCase = true).trim()
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1944,8 +1976,8 @@ fun LoansScreen(
                                     "${act.activityType} · $actDateText: ${AccountingEngine.formatMoney(act.principalPortion, actSymbol)}${if (act.interestPortion > 0) " (+${AccountingEngine.formatMoney(act.interestPortion, actSymbol)} interest)" else ""}",
                                     style = MaterialTheme.typography.bodySmall
                                 )
-                                if (act.note.isNotBlank()) {
-                                    Text(act.note, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (cleanActNote.isNotBlank()) {
+                                    Text(cleanActNote, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                             if (act.activityType != LoanActivityType.DISBURSEMENT.name) {
@@ -1971,6 +2003,13 @@ fun LoansScreen(
                             } else if (prin > liveSummary.outstandingPrincipal + 0.01 && !allowOverRepayment) {
                                 errorMsg = "Principal repayment exceeds outstanding (${AccountingEngine.formatMoney(liveSummary.outstandingPrincipal, loanSymbol)})."
                             } else {
+                                val resolvedWalletId = repaymentWalletId?.takeIf { it > 0L }
+                                val cleanRepayNote = repaymentNote.trim()
+                                val finalRepayNote = if (uiState.isFundEnabled && resolvedWalletId != null && repaymentIsFund) {
+                                    if (cleanRepayNote.isNotBlank()) "[FUND_LOAN] $cleanRepayNote" else "[FUND_LOAN]"
+                                } else {
+                                    cleanRepayNote
+                                }
                                 viewModel.recordLoanRepayment(
                                     loan = liveSummary.loan,
                                     activity = LoanActivityEntity(
@@ -1978,9 +2017,9 @@ fun LoansScreen(
                                         activityType = LoanActivityType.REPAYMENT.name,
                                         principalPortion = AccountingEngine.roundCurrency(prin.coerceAtLeast(0.0)),
                                         interestPortion = AccountingEngine.roundCurrency(intr),
-                                        walletId = repaymentWalletId?.takeIf { it > 0L },
+                                        walletId = resolvedWalletId,
                                         date = System.currentTimeMillis(),
-                                        note = repaymentNote.trim()
+                                        note = finalRepayNote
                                     )
                                 )
                                 selectedLoanForRepayment = null

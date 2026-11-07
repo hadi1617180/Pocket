@@ -84,10 +84,10 @@ interface PocketDao {
     @Query("UPDATE app_settings SET defaultWalletId = :toWalletId WHERE defaultWalletId = :fromWalletId")
     suspend fun reassignSettingsDefaultWallet(fromWalletId: Long, toWalletId: Long)
 
-    @Query("DELETE FROM transactions WHERE transferId IN (SELECT id FROM transfers WHERE sourceWalletId = destinationWalletId)")
+    @Query("DELETE FROM transactions WHERE transferId IN (SELECT id FROM transfers WHERE sourceWalletId = destinationWalletId AND note NOT LIKE '%[FUND_BORROW]%' AND note NOT LIKE '%[FUND_RETURN]%' AND note NOT LIKE '%[FUND_TRANSFER]%')")
     suspend fun deleteSelfTransferFeesAfterMigration()
 
-    @Query("DELETE FROM transfers WHERE sourceWalletId = destinationWalletId")
+    @Query("DELETE FROM transfers WHERE sourceWalletId = destinationWalletId AND note NOT LIKE '%[FUND_BORROW]%' AND note NOT LIKE '%[FUND_RETURN]%' AND note NOT LIKE '%[FUND_TRANSFER]%'")
     suspend fun deleteSelfTransfersAfterMigration()
 
     // --- Categories ---
@@ -193,10 +193,22 @@ interface PocketDao {
             transfer.id
         }
         if (transfer.feeAmount > 0.0) {
-            val feeNote = if (transfer.note.isNotBlank()) {
-                "Transfer fee ($sourceWalletName → $destWalletName): ${transfer.note}"
+            val isFundBorrowSource = transfer.note.contains("[FUND_BORROW]", ignoreCase = true)
+            val isFundTransferSource = transfer.note.contains("[FUND_TRANSFER]", ignoreCase = true)
+            val cleanNote = transfer.note
+                .replace("[FUND_TRANSFER]", "", ignoreCase = true)
+                .replace("[FUND_BORROW]", "", ignoreCase = true)
+                .replace("[FUND_RETURN]", "", ignoreCase = true)
+                .trim()
+            val feeNote = if (cleanNote.isNotBlank()) {
+                "Transfer fee ($sourceWalletName → $destWalletName): $cleanNote"
             } else {
                 "Transfer fee ($sourceWalletName → $destWalletName)"
+            }
+            val feeTags = when {
+                isFundBorrowSource -> "transfer-fee, FUND_BORROW"
+                isFundTransferSource -> "transfer-fee, FUND_EXPENSE"
+                else -> "transfer-fee"
             }
             insertTransaction(
                 TransactionEntity(
@@ -207,7 +219,7 @@ interface PocketDao {
                     categoryId = feeCategoryId,
                     note = feeNote,
                     reference = "TR-$savedTransferId",
-                    tags = "transfer-fee",
+                    tags = feeTags,
                     transferId = savedTransferId
                 )
             )
@@ -265,6 +277,12 @@ interface PocketDao {
     suspend fun createLoanAtomically(loan: LoanEntity): Long {
         val loanId = insertLoan(loan)
         if (loan.initialWalletId != null && loan.initialWalletId > 0L) {
+            val isFundLoan = loan.note.contains("[FUND_LOAN]", ignoreCase = true)
+            val baseNote = if (loan.direction == LoanDirection.LENT.name) {
+                "Initial loan lent to ${loan.personName}"
+            } else {
+                "Initial loan borrowed from ${loan.personName}"
+            }
             insertLoanActivity(
                 LoanActivityEntity(
                     loanId = loanId,
@@ -273,11 +291,7 @@ interface PocketDao {
                     interestPortion = 0.0,
                     walletId = loan.initialWalletId,
                     date = loan.startDate,
-                    note = if (loan.direction == LoanDirection.LENT.name) {
-                        "Initial loan lent to ${loan.personName}"
-                    } else {
-                        "Initial loan borrowed from ${loan.personName}"
-                    }
+                    note = if (isFundLoan) "[FUND_LOAN] $baseNote" else baseNote
                 )
             )
         }
@@ -298,6 +312,12 @@ interface PocketDao {
         }
         if (activity.interestPortion > 0.0 && activity.walletId != null && activity.walletId > 0L) {
             val isLent = loan.direction == LoanDirection.LENT.name
+            val isFundActivity = activity.note.contains("[FUND_LOAN]", ignoreCase = true)
+            val interestTags = when {
+                isFundActivity && isLent -> "loan-interest, FUND_IN"
+                isFundActivity && !isLent -> "loan-interest, FUND_EXPENSE"
+                else -> "loan-interest"
+            }
             insertTransaction(
                 TransactionEntity(
                     type = if (isLent) TransactionType.INCOME.name else TransactionType.EXPENSE.name,
@@ -311,7 +331,7 @@ interface PocketDao {
                         "Loan interest paid to ${loan.personName}"
                     },
                     reference = "LOAN-${loan.id}",
-                    tags = "loan-interest",
+                    tags = interestTags,
                     loanActivityId = activityId
                 )
             )

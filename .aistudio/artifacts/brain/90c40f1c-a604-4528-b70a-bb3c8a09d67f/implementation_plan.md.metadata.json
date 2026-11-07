@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan covering the 4 bug/loophole fixes (Wallets current-month budget calculation, current-month Report navigation sync, Wallet Detail Personal/Fund balance display + Return to Fund action + isFundEnabled guard, and One-Tap Adjust dialog on adjustment history edit) along with the 2 approved Loans (Khata) minimalistic UI improvements (single-row filter bar and moving Share/PDF buttons inside expanded Khata cards).",
-  "updatedAt": "2026-11-06T19:12:59.682649106Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Deep audit bug fixes (Personal vs Fund report separation, cross-wallet Fund borrow/return reconciliation, self-transfer migration protection, child fee sub-wallet tag propagation, Combined Fund loan visibility, and sub-wallet formula/running balance accuracy) plus clean minimalistic UI enhancements.",
+  "updatedAt":  "2026-11-07T12:17:40.570203191Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

@@ -68,7 +68,7 @@ fun ReportsScreen(
     uiState: PocketUiState,
     viewModel: PocketViewModel
 ) {
-    val report = uiState.monthlyReport ?: return
+    val baseReport = uiState.monthlyReport ?: return
     val context = LocalContext.current
     val view = androidx.compose.ui.platform.LocalView.current
     val availableCurrencies = remember(uiState.wallets) {
@@ -80,6 +80,39 @@ fun ReportsScreen(
         }
     }
     val activeReportCurrency = uiState.selectedReportCurrency.ifBlank { "BDT" }
+    val defaultSubFilter = if (uiState.isFundEnabled) "PERSONAL" else "COMBINED"
+    var reportSubWalletFilter by remember(uiState.isFundEnabled) {
+        mutableStateOf(defaultSubFilter)
+    }
+    val report = remember(
+        baseReport,
+        reportSubWalletFilter,
+        defaultSubFilter,
+        uiState.selectedYear,
+        uiState.selectedMonth,
+        activeReportCurrency,
+        uiState.transactions,
+        uiState.categories,
+        uiState.loans,
+        uiState.loanActivities,
+        uiState.wallets
+    ) {
+        if (reportSubWalletFilter == defaultSubFilter) {
+            baseReport
+        } else {
+            AccountingEngine.calculateMonthlyReport(
+                year = uiState.selectedYear,
+                month = uiState.selectedMonth,
+                transactions = uiState.transactions,
+                categories = uiState.categories,
+                loans = uiState.loans,
+                loanActivities = uiState.loanActivities,
+                wallets = uiState.wallets,
+                reportCurrency = activeReportCurrency,
+                subWalletFilter = reportSubWalletFilter
+            )
+        }
+    }
     val symbol = remember(activeReportCurrency, uiState.settings.currencySymbol) {
         if (activeReportCurrency.equals("BDT", ignoreCase = true)) {
             uiState.settings.currencySymbol
@@ -295,13 +328,53 @@ fun ReportsScreen(
                 }
             }
 
-            // Month Selector
+            // Sub-Wallet Filter (Personal / Fund / Combined) + Month Selector in a single minimal row
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (uiState.isFundEnabled) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.testTag("report_subwallet_filter_row")
+                        ) {
+                            listOf(
+                                "PERSONAL" to "Personal",
+                                "FUND" to "Fund",
+                                "COMBINED" to "All"
+                            ).forEach { (modeKey, modeLabel) ->
+                                val isSelected = reportSubWalletFilter == modeKey
+                                Surface(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            performPocketHaptic(view)
+                                            reportSubWalletFilter = modeKey
+                                        }
+                                        .testTag("report_subwallet_chip_${modeKey.lowercase()}"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else pocketColors.surfaceElevated,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
+                                    )
+                                ) {
+                                    Text(
+                                        text = modeLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
                     MonthSelectorPill(
                         year = uiState.selectedYear,
                         month = uiState.selectedMonth,

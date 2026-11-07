@@ -1,30 +1,38 @@
-# Deep Analysis Bug Fixes & Loans (Khata) Minimalistic UI Plan
+# Deep Audit Bug Fixes & Minimalistic UI Polish Plan
 
-## 1. Bug & Loophole Fixes
+## 1. Accounting & Data-Layer Loopholes Found (To Be Fixed)
 
-### A. Wallets Screen — Current Month Budget & Report Sync (`WalletsAndAdjustmentScreens.kt`)
-- **Current-Month Remaining Days Fix:** In `WalletsOverviewScreen`, update the `Monthly Budget` bar calculation (`remainingDays` and `safePerDay`) to always use `calNow.getActualMaximum(Calendar.DAY_OF_MONTH)` and `calNow.get(Calendar.DAY_OF_MONTH)` instead of referencing `uiState.selectedYear` and `uiState.selectedMonth`. This ensures switching months in the `Report` tab never distorts the `Safe: ৳X/day (Y d left)` calculation on the `Wallets` screen.
-- **Current-Month Report Navigation Sync:** When tapping the `Monthly Budget` progress bar on `WalletsOverviewScreen`, call `viewModel.resetToCurrentMonth()` before navigating to `PocketScreen.Reports` so the report always opens on the current calendar month matching the budget bar.
+### A. Monthly Reports & Home Summary Mixing Fund with Personal (`AccountingEngine.kt` & `ReportsAndStatementScreens.kt`)
+- **Issue**: Currently, `calculateMonthlyReport` includes `FUND_IN` (official Fund deposits) and `FUND_EXPENSE` (official Fund expenses) inside the user's Personal Monthly Income, Expense, Net Cashflow, and Monthly Budget progress.
+- **Fix**:
+  - Default the Home Hero Card's monthly Income/Expense pills and the Personal Monthly Budget tracker to **Personal-only** (`PERSONAL` income/expenses + `FUND_BORROW` expenses, which are personal expenses paid by borrowing from Fund).
+  - Add a clean 3-chip filter toggle (`Personal` • `Fund` • `Combined`) at the top of the **Reports** screen so the user can inspect Personal cashflow, Official Fund cashflow (`FUND_IN` vs `FUND_EXPENSE`), or Combined totals independently.
 
-### B. Wallet Detail Screen — Personal vs. Fund Balance & Adjustment Edit (`WalletsAndAdjustmentScreens.kt`)
-- **`isFundEnabled` Guard:** Guard all Fund breakdown pills and actions in `WalletDetailScreen` with `uiState.isFundEnabled` so no Fund text appears when the Fund feature is disabled in Settings.
-- **Personal Balance Headline & Fund Pill:** When `uiState.isFundEnabled` is active and a regular wallet (`!wallet.isFundWallet`) holds virtual Fund money (`summary.hasVirtualFund || kotlin.math.abs(summary.fundBalance) > 0.005 || summary.fundBorrowedDue > 0.005`):
-  - Display `summary.personalBalance` as the primary headline balance (labeled `"Personal Balance"`).
-  - Below it, display a clean elevated pill showing `Fund: ৳X • Total: ৳Y` (plus `Borrowed Due: ৳Z` when applicable) and a compact `Return to Fund` button when `effectiveDue > 0.005`.
-- **Direct Adjustment Editing:** When selecting an adjustment entry (`LedgerEntryKind.ADJUSTMENT`) from `Running Balance History` and tapping `Edit`, open `OneTapAdjustBalanceDialog` (`showOneTapAdjustDialog = true`) instead of the full `WalletFormDialog`.
+### B. Wallet Migration Deleting Same-Wallet Sub-Wallet Transfers (`PocketDao.kt`)
+- **Issue**: `deleteSelfTransfersAfterMigration()` deletes all transfers where `sourceWalletId == destinationWalletId` across the database. Because `<Wallet>-Personal ↔ <Wallet>-Fund` transfers (`[FUND_BORROW]` / `[FUND_RETURN]`) legitimately share the same `walletId`, migrating any wallet would accidentally delete internal sub-wallet transfers.
+- **Fix**: Exclude `[FUND_BORROW]`, `[FUND_RETURN]`, and `[FUND_TRANSFER]` notes from `deleteSelfTransfersAfterMigration()` and `deleteSelfTransferFeesAfterMigration()`.
+
+### C. Service Fees & Transfer Fees Sub-Wallet Tag Propagation (`PocketRepository.kt` & `PocketDao.kt`)
+- **Issue**:
+  1. In `saveTransactionWithOptionalFee`, editing an existing transaction with a child service fee did not update `tags` on the child fee transaction, and an `INCOME` with `FUND_IN` that had a fee created an `EXPENSE` child with `FUND_IN` instead of `FUND_EXPENSE`.
+  2. In `saveTransferAtomically`, a transfer with `[FUND_BORROW]` that included a fee tagged the fee as `FUND_EXPENSE` instead of `FUND_BORROW`.
+- **Fix**: Properly map child fee tags (`FUND_EXPENSE` for official Fund transactions/transfers, `FUND_BORROW` for borrowed-from-Fund transactions/transfers) on both insert and update.
+
+### D. Cross-Wallet Fund Borrow & Return Reconciliation (`AccountingEngine.kt` & `PocketUiState`)
+- **Issue**: If a user borrows from `MTB-Fund` (`৳500`) and later repays that borrowed amount into `Bkash-Fund` (`[FUND_RETURN] ৳500`), the global `totalFundBorrowedDue` becomes `৳0`, but `MTB`'s individual `fundBorrowedDue` still showed `৳500` because the return happened in `Bkash`. Also, `totalFundBalance` summed across wallets without checking currency (`BDT`).
+- **Fix**: Filter global Fund totals to primary currency (`BDT`) and reconcile individual wallet `fundBorrowedDue` against global excess returns so paid-off borrows never leave stale warnings on individual cards.
+
+### E. `CombinedFundDetailScreen` & `WalletDetailScreen` Sub-Wallet Completeness (`WalletsAndAdjustmentScreens.kt`)
+- **Issue**:
+  1. `CombinedFundDetailScreen` missed `[FUND_LOAN]` entries in its filter and didn't support editing `LOAN_PRINCIPAL` or transfer-fee rows directly.
+  2. In `WalletDetailScreen`, switching to `<Wallet>-Personal` or `<Wallet>-Fund` still showed the combined wallet formula breakdown at the top instead of the selected sub-wallet's breakdown, and hid the running balance on sub-wallet tabs.
+- **Fix**:
+  - Include `[FUND_LOAN]` entries in `CombinedFundDetailScreen` and support full edit actions for transfers and loans.
+  - Show sub-wallet-specific formula breakdown and accurate sub-wallet running balances when viewing `<Wallet>-Personal` or `<Wallet>-Fund` tabs.
 
 ---
 
-## 2. Minimalistic UI Redesign — Loans (Khata) Screen (`CategoriesLoansSettingsScreens.kt`)
-
-### A. Single-Row View Mode & Direction Filter Bar
-- Combine the view mode chips (`By Person (Khata)` / `Individual Loans`) and direction filter chips (`All` / `Lent` / `Borrowed`) into a single compact horizontal `LazyRow` with a subtle vertical divider between the two groups, removing an entire vertical row above the search field.
-
-### B. Cleaner Collapsed Khata Person Cards
-- Move the `Share Khata Statement` and `PDF` export buttons inside the `if (isExpanded)` section of each `khata_person_card_${group.personKey}` card.
-- Collapsed Khata cards will only display the person's avatar badge, name, loan count / status subtitle, net amount, and expand chevron—making the Khata list clean and scannable at a glance.
-
----
-
-## 3. Verification
-- Run `compile_applet` to verify all Kotlin types, imports, and Compose test tags compile cleanly without errors.
+## 2. Minimalistic UI Enhancements Included
+- **Collapsible Formula Breakdown in Wallet Detail**: Keep the top balance card clean by making the multi-line formula breakdown expandable/collapsible with a single tap so the transaction list is immediately visible without scrolling.
+- **Sub-Wallet Filter Chips in Transaction History**: Add quick `All` / `Personal` / `Fund` filter chips in the History screen so users can filter personal vs fund entries anytime.
+- **Clean Single-Line Borrowed-from-Fund Banner**: Streamline the Borrowed-from-Fund indicator on the Wallets screen into a compact single-line pill with a quick `Repay` action.

@@ -42,7 +42,7 @@ enum class LoanActivityType(val label: String) {
 }
 
 const val VIRTUAL_FUND_WALLET_ID = -999L
-private val VFUND_HINT_REGEX = Regex("""\[VFUND:(1|0):(-?[0-9]+(?:\.[0-9]+)?)]""", RegexOption.IGNORE_CASE)
+private val VFUND_HINT_REGEX = Regex("""\[VFUND:(1|0):(-?[0-9]+(?:\.[0-9]+)?)(?::([0-9]+))?]""", RegexOption.IGNORE_CASE)
 
 @JsonClass(generateAdapter = true)
 @Entity(tableName = "wallets")
@@ -95,13 +95,33 @@ data class WalletEntity(
         }
 
     @get:androidx.room.Ignore
+    val fundResetAtMillis: Long
+        get() {
+            val match = VFUND_HINT_REGEX.find(accountHint)
+            if (match != null && match.groupValues.size > 3) {
+                return match.groupValues[3].toLongOrNull() ?: 0L
+            }
+            return 0L
+        }
+
+    @get:androidx.room.Ignore
     val cleanAccountHint: String
         get() = accountHint.replace(VFUND_HINT_REGEX, "").trim()
 
-    fun withVirtualFund(enabled: Boolean, openingFund: Double = 0.0): WalletEntity {
+    fun withVirtualFund(
+        enabled: Boolean,
+        openingFund: Double = 0.0,
+        resetAtMillis: Long = this.fundResetAtMillis
+    ): WalletEntity {
         val clean = cleanAccountHint
-        val roundedFund = kotlin.math.round(openingFund.coerceAtLeast(0.0) * 100.0) / 100.0
-        val token = if (enabled) "[VFUND:1:$roundedFund]" else "[VFUND:0:0.0]"
+        val roundedFund = kotlin.math.round(openingFund * 100.0) / 100.0
+        val flag = if (enabled) "1" else "0"
+        val cleanFundVal = if (enabled) roundedFund else 0.0
+        val token = if (resetAtMillis > 0L) {
+            "[VFUND:$flag:$cleanFundVal:$resetAtMillis]"
+        } else {
+            "[VFUND:$flag:$cleanFundVal]"
+        }
         val combinedHint = if (clean.isBlank()) token else "$clean $token"
         return copy(accountHint = combinedHint)
     }

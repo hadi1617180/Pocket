@@ -513,5 +513,70 @@ class ExampleUnitTest {
         val totalAvailableBalance = cashSum.currentBalance + bankSum.currentBalance + fundSum.currentBalance
         assertEquals(362000.0, totalAvailableBalance, 0.001)
     }
+
+    @Test
+    fun `fund cycle reset archives old official spent and borrowed stats while keeping personal and fund balances exact`() {
+        val t0 = 1_700_000_000_000L
+        val mtb = WalletEntity(id = 1, name = "MTB", type = WalletType.BANK.name, openingBalance = 10000.0)
+            .withVirtualFund(enabled = true, openingFund = 0.0, resetAtMillis = 0L)
+
+        val fundIn1 = TransactionEntity(
+            id = 1,
+            type = TransactionType.INCOME.name,
+            amount = 50000.0,
+            date = t0 + 1000L,
+            walletId = 1,
+            categoryId = 1,
+            tags = "FUND_IN"
+        )
+        val officialExp1 = TransactionEntity(
+            id = 2,
+            type = TransactionType.EXPENSE.name,
+            amount = 20000.0,
+            date = t0 + 2000L,
+            walletId = 1,
+            categoryId = 1,
+            tags = "FUND_EXPENSE"
+        )
+        val txsBeforeReset = listOf(fundIn1, officialExp1)
+
+        val summaryBefore = AccountingEngine.calculateWalletSummary(
+            wallet = mtb,
+            transactions = txsBeforeReset,
+            transfers = emptyList(),
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+        assertEquals(40000.0, summaryBefore.currentBalance, 0.001) // 10k personal + 30k fund
+        assertEquals(10000.0, summaryBefore.personalBalance, 0.001)
+        assertEquals(30000.0, summaryBefore.fundBalance, 0.001)
+        assertEquals(20000.0, summaryBefore.fundOfficialSpent, 0.001)
+
+        // Now reset cycle stats at t0 + 5000L while keeping current fund balance (30,000) intact:
+        val resetTime = t0 + 5000L
+        val mtbAfterCycleReset = mtb.withVirtualFund(
+            enabled = true,
+            openingFund = summaryBefore.fundBalance,
+            resetAtMillis = resetTime
+        )
+        assertEquals(resetTime, mtbAfterCycleReset.fundResetAtMillis)
+
+        val summaryAfterReset = AccountingEngine.calculateWalletSummary(
+            wallet = mtbAfterCycleReset,
+            transactions = txsBeforeReset,
+            transfers = emptyList(),
+            loans = emptyList(),
+            loanActivities = emptyList(),
+            adjustments = emptyList()
+        )
+        // Balances remain 100% unchanged, while Official Spent & Borrowed Due reset to 0 for the new cycle!
+        assertEquals(40000.0, summaryAfterReset.currentBalance, 0.001)
+        assertEquals(10000.0, summaryAfterReset.personalBalance, 0.001)
+        assertEquals(30000.0, summaryAfterReset.fundBalance, 0.001)
+        assertEquals(0.0, summaryAfterReset.fundOfficialSpent, 0.001)
+        assertEquals(0.0, summaryAfterReset.fundBorrowedDue, 0.001)
+    }
 }
+
 

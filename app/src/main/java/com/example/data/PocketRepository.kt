@@ -935,6 +935,18 @@ class PocketRepository(private val dao: PocketDao) {
 
     suspend fun deleteOrMigrateWallet(walletId: Long, migrateToWalletId: Long?) {
         if (migrateToWalletId != null && migrateToWalletId != walletId) {
+            val allWallets = dao.getAllWallets()
+            val fromW = allWallets.firstOrNull { it.id == walletId }
+            val toW = allWallets.firstOrNull { it.id == migrateToWalletId }
+            if (fromW != null && toW != null && (fromW.hasVirtualFund || kotlin.math.abs(fromW.openingFundBalance) > 0.005)) {
+                val mergedOpeningFund = AccountingEngine.roundCurrency(toW.openingFundBalance + fromW.openingFundBalance)
+                dao.updateWallet(
+                    toW.withVirtualFund(
+                        enabled = true,
+                        openingFund = mergedOpeningFund
+                    )
+                )
+            }
             dao.migrateAndDeleteWallet(walletId, migrateToWalletId)
         } else {
             dao.deleteWalletById(walletId)
@@ -1048,6 +1060,16 @@ class PocketRepository(private val dao: PocketDao) {
             } else {
                 "Service charge / payment fee"
             }
+            // Map parent's sub-wallet tag to an EXPENSE-compatible sub-wallet tag for the child fee
+            val childTags = transaction.tags
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .map { token ->
+                    if (token.equals("FUND_IN", ignoreCase = true)) "FUND_EXPENSE" else token
+                }
+                .distinct()
+                .joinToString(", ")
             val firstChild = existingChildren.firstOrNull()
             if (firstChild != null) {
                 dao.updateTransaction(
@@ -1059,6 +1081,7 @@ class PocketRepository(private val dao: PocketDao) {
                         categoryId = feeCatId,
                         note = feeNote,
                         reference = transaction.reference,
+                        tags = childTags,
                         parentTransactionId = parentId
                     )
                 )
@@ -1075,7 +1098,7 @@ class PocketRepository(private val dao: PocketDao) {
                         categoryId = feeCatId,
                         note = feeNote,
                         reference = transaction.reference,
-                        tags = transaction.tags,
+                        tags = childTags,
                         parentTransactionId = parentId
                     )
                 )
@@ -1119,7 +1142,7 @@ class PocketRepository(private val dao: PocketDao) {
                 LedgerEntryKind.ADJUSTMENT -> {
                     val adj = allAdjs.firstOrNull { it.id == entry.rawId }
                     if (adj != null && !adj.isReversed) {
-                        dao.updateBalanceAdjustment(adj.copy(isReversed = true))
+                        reverseBalanceAdjustment(adj)
                     }
                 }
             }
@@ -1183,7 +1206,21 @@ class PocketRepository(private val dao: PocketDao) {
     }
 
     suspend fun reverseBalanceAdjustment(adjustment: BalanceAdjustmentEntity) {
-        dao.updateBalanceAdjustment(adjustment.copy(isReversed = !adjustment.isReversed))
+        val nextReversed = !adjustment.isReversed
+        dao.updateBalanceAdjustment(adjustment.copy(isReversed = nextReversed))
+        if (adjustment.note.contains("-Fund", ignoreCase = true)) {
+            val wallet = dao.getAllWallets().firstOrNull { it.id == adjustment.walletId }
+            if (wallet != null && adjustment.date > wallet.fundResetAtMillis) {
+                val delta = if (nextReversed) -adjustment.difference else adjustment.difference
+                val newOpeningFund = AccountingEngine.roundCurrency(wallet.openingFundBalance + delta)
+                dao.updateWallet(
+                    wallet.withVirtualFund(
+                        enabled = wallet.hasVirtualFund,
+                        openingFund = newOpeningFund
+                    )
+                )
+            }
+        }
     }
 
     // --- Recurring Transactions (Option A: Ask to Confirm) ---
