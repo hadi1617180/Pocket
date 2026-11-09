@@ -13,6 +13,8 @@ import androidx.fragment.app.FragmentActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -24,8 +26,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -35,9 +41,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -335,36 +345,72 @@ fun PocketApp(viewModel: PocketViewModel) {
 
         val isTopLevelScreen = uiState.currentScreen is PocketScreen.Home ||
             uiState.currentScreen is PocketScreen.Wallets ||
-            uiState.currentScreen is PocketScreen.TransactionHistory ||
+            (uiState.currentScreen is PocketScreen.TransactionHistory && (uiState.currentScreen as PocketScreen.TransactionHistory).initialTypeFilter == null && (uiState.currentScreen as PocketScreen.TransactionHistory).initialCategoryId == null && (uiState.currentScreen as PocketScreen.TransactionHistory).initialWalletId == null) ||
             uiState.currentScreen is PocketScreen.Reports ||
-            uiState.currentScreen is PocketScreen.LoansManagement
+            (uiState.currentScreen is PocketScreen.LoansManagement && !(uiState.currentScreen as PocketScreen.LoansManagement).openCreateDialog)
+
+        val topLevelTabs = remember {
+            listOf(
+                BottomNavTab.BALANCES,
+                BottomNavTab.RECENT_TRANSACTIONS,
+                BottomNavTab.REPORTS,
+                BottomNavTab.LOANS
+            )
+        }
+        val coroutineScope = rememberCoroutineScope()
+        val mainTabPagerState = rememberPagerState(
+            initialPage = topLevelTabs.indexOf(uiState.activeBottomTab).coerceAtLeast(0),
+            pageCount = { topLevelTabs.size }
+        )
+
+        // Sync external tab changes (e.g. BackHandler, deep links, or sub-screen navigation) into the horizontal pager
+        LaunchedEffect(uiState.activeBottomTab) {
+            val targetIndex = topLevelTabs.indexOf(uiState.activeBottomTab).coerceAtLeast(0)
+            if (mainTabPagerState.targetPage != targetIndex && !mainTabPagerState.isScrollInProgress) {
+                mainTabPagerState.animateScrollToPage(
+                    page = targetIndex,
+                    animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing)
+                )
+            }
+        }
+
+        // Sync finger swipe on the horizontal pager into ViewModel as soon as targetPage or settledPage updates
+        LaunchedEffect(mainTabPagerState) {
+            snapshotFlow { mainTabPagerState.settledPage }
+                .collect { settledPage ->
+                    val targetTab = topLevelTabs.getOrNull(settledPage) ?: return@collect
+                    viewModel.switchBottomTab(targetTab)
+                }
+        }
 
         val isOverlayPopupScreen = uiState.currentScreen is PocketScreen.TransactionForm ||
             uiState.currentScreen is PocketScreen.TransferForm ||
             uiState.currentScreen is PocketScreen.BalanceAdjustment
 
-        // Mandatory BackHandler for custom state-based navigation on all secondary screens or non-Balances tabs
-        BackHandler(enabled = uiState.currentScreen !is PocketScreen.Wallets && uiState.currentScreen !is PocketScreen.Home) {
-            viewModel.navigateBack()
+        // Mandatory BackHandler for custom state-based navigation
+        BackHandler(enabled = !isTopLevelScreen || mainTabPagerState.currentPage != 0) {
+            if (isTopLevelScreen && mainTabPagerState.currentPage != 0) {
+                coroutineScope.launch {
+                    mainTabPagerState.animateScrollToPage(
+                        page = 0,
+                        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing)
+                    )
+                }
+                viewModel.switchBottomTab(BottomNavTab.BALANCES)
+            } else {
+                viewModel.navigateBack()
+            }
         }
 
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.safeDrawing,
-            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-            bottomBar = {
-                if (isTopLevelScreen) {
-                    LiquidBottomNavigationBar(
-                        activeTab = uiState.activeBottomTab,
-                        onSelectTab = { tab -> viewModel.switchBottomTab(tab) }
-                    )
-                }
-            }
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
         ) { innerPadding ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
+                    .padding(top = innerPadding.calculateTopPadding())
             ) {
                 // When an overlay popup screen (New Record, Transfer, Reconcile) is open,
                 // render the active background tab with a 12.dp blur and lighter scrim underneath
@@ -403,9 +449,37 @@ fun PocketApp(viewModel: PocketViewModel) {
                     )
                 }
 
-                AnimatedContent(
-                    targetState = uiState.currentScreen,
-                    transitionSpec = {
+                if (isTopLevelScreen) {
+                    HorizontalPager(
+                        state = mainTabPagerState,
+                        modifier = Modifier.fillMaxSize()
+                    ) { pageIndex ->
+                        when (pageIndex) {
+                            0 -> WalletsOverviewScreen(
+                                uiState = uiState,
+                                viewModel = viewModel
+                            )
+                            1 -> TransactionHistoryScreen(
+                                uiState = uiState,
+                                viewModel = viewModel,
+                                initialTypeFilter = null,
+                                initialCategoryId = null,
+                                initialWalletId = null
+                            )
+                            2 -> ReportsScreen(
+                                uiState = uiState,
+                                viewModel = viewModel
+                            )
+                            3 -> LoansScreen(
+                                uiState = uiState,
+                                viewModel = viewModel
+                            )
+                        }
+                    }
+                } else {
+                    AnimatedContent(
+                        targetState = uiState.currentScreen,
+                        transitionSpec = {
                         (fadeIn(
                             animationSpec = spring(
                                 dampingRatio = Spring.DampingRatioNoBouncy,
@@ -504,6 +578,7 @@ fun PocketApp(viewModel: PocketViewModel) {
                         )
                     }
                 }
+            }
 
                 uiState.pendingRecurringPayId?.let { pendingId ->
                     val targetRecurring = uiState.recurringTransactions.firstOrNull { it.id == pendingId }
@@ -534,6 +609,48 @@ fun PocketApp(viewModel: PocketViewModel) {
                         onDismiss = { viewModel.dismissUpgradeDialog() },
                         onRedeemCode = { code -> viewModel.redeemActivationCode(context, code) },
                         onGoogleSignedIn = { user -> viewModel.onGoogleUserSignedIn(user) }
+                    )
+                }
+
+                if (isTopLevelScreen) {
+                    // Soft gradient overlay from screen bottom up to FAB level (~160dp)
+                    // softly dimming and fading background scrolling text behind the liquid glass dock
+                    val isLight = uiState.settings.themeMode.equals("LIGHT", ignoreCase = true)
+                    val scrimColor = if (isLight) Color.White else Color.Black
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .align(Alignment.BottomCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        scrimColor.copy(alpha = 0.50f),
+                                        scrimColor.copy(alpha = 0.88f)
+                                    )
+                                )
+                            )
+                    )
+
+                    val dockActiveTab = topLevelTabs.getOrNull(mainTabPagerState.targetPage)
+                        ?: uiState.activeBottomTab
+
+                    LiquidBottomNavigationBar(
+                        activeTab = dockActiveTab,
+                        onSelectTab = { tab ->
+                            val targetPage = topLevelTabs.indexOf(tab).coerceAtLeast(0)
+                            viewModel.switchBottomTab(tab)
+                            coroutineScope.launch {
+                                mainTabPagerState.animateScrollToPage(
+                                    page = targetPage,
+                                    animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing)
+                                )
+                            }
+                        },
+                        boxColorHex = uiState.settings.boxColorHex,
+                        boxOpacity = uiState.settings.boxOpacity,
+                        modifier = Modifier.align(Alignment.BottomCenter)
                     )
                 }
             }

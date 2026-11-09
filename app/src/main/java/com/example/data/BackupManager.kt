@@ -178,7 +178,12 @@ object BackupManager {
                     "Referential integrity error: Transfer #${tr.id} references a missing wallet."
                 )
             }
-            if (tr.sourceWalletId == tr.destinationWalletId) {
+            val isInternalFundMove = tr.note.contains("[FUND_RETURN]", ignoreCase = true) ||
+                tr.note.contains("[FUND_BORROW]", ignoreCase = true) ||
+                tr.note.contains("[FUND_SETTLE]", ignoreCase = true) ||
+                tr.note.contains("[FUND_TOPUP]", ignoreCase = true) ||
+                tr.note.contains("[FUND_TRANSFER]", ignoreCase = true)
+            if (tr.sourceWalletId == tr.destinationWalletId && !isInternalFundMove) {
                 return BackupValidationResult(
                     false,
                     "Validation error: Transfer #${tr.id} has identical source and destination wallet."
@@ -428,8 +433,18 @@ object BackupManager {
         sb.appendLine("Date,Type,Description,Category,Wallet,Secondary Wallet,Amount,Fee,Reference,Tags")
         entries.forEach { e ->
             val dt = fmt.format(Date(e.date))
+            val cleanTags = e.tags
+                .split(",")
+                .map { it.trim() }
+                .filter {
+                    it.isNotBlank() &&
+                        !it.equals("FUND_BORROW", ignoreCase = true) &&
+                        !it.equals("FUND_EXPENSE", ignoreCase = true) &&
+                        !it.equals("FUND_IN", ignoreCase = true)
+                }
+                .joinToString(", ")
             sb.appendLine(
-                "${escapeCsv(dt)},${escapeCsv(e.kind.name)},${escapeCsv(e.title)},${escapeCsv(e.categoryName)},${escapeCsv(e.walletName)},${escapeCsv(e.secondaryWalletName ?: "")},${e.signedAmount},${e.feeAmount},${escapeCsv(e.reference)},${escapeCsv(e.tags)}"
+                "${escapeCsv(dt)},${escapeCsv(e.kind.name)},${escapeCsv(e.title)},${escapeCsv(e.categoryName)},${escapeCsv(e.walletName)},${escapeCsv(e.secondaryWalletName ?: "")},${e.signedAmount},${e.feeAmount},${escapeCsv(e.reference)},${escapeCsv(cleanTags)}"
             )
         }
         return sb.toString()
@@ -487,8 +502,12 @@ object BackupManager {
             val createdStr = tr(dateFmt.format(Date(summary.loan.startDate)))
             val idxStr = PocketLocalizer.localizeDigits("${idx + 1}")
             sb.appendLine("$idxStr. *$dir ${AccountingEngine.formatMoney(summary.loan.principalAmount, loanSym)}* ($createdStr) [$status]")
-            if (summary.loan.note.isNotBlank()) {
-                sb.appendLine(if (isBn) "   নোট: ${summary.loan.note}" else "   Note: ${summary.loan.note}")
+            val cleanLoanNote = summary.loan.note
+                .replace("[FUND_LOAN_BORROW]", "", ignoreCase = true)
+                .replace("[FUND_LOAN]", "", ignoreCase = true)
+                .trim()
+            if (cleanLoanNote.isNotBlank()) {
+                sb.appendLine(if (isBn) "   নোট: $cleanLoanNote" else "   Note: $cleanLoanNote")
             }
             if (summary.loan.dueDate != null) {
                 sb.appendLine(
@@ -507,7 +526,11 @@ object BackupManager {
                     if (isBn) " (+${AccountingEngine.formatMoney(act.interestPortion, loanSym)} সুদ)"
                     else " (+${AccountingEngine.formatMoney(act.interestPortion, loanSym)} interest)"
                 } else ""
-                val noteSuffix = if (act.note.isNotBlank()) " — ${act.note}" else ""
+                val cleanActNote = act.note
+                    .replace("[FUND_LOAN_BORROW]", "", ignoreCase = true)
+                    .replace("[FUND_LOAN]", "", ignoreCase = true)
+                    .trim()
+                val noteSuffix = if (cleanActNote.isNotBlank()) " — $cleanActNote" else ""
                 sb.appendLine("   • $actDate: $actType ${AccountingEngine.formatMoney(act.principalPortion, loanSym)}$interestStr$noteSuffix")
             }
         }
@@ -641,9 +664,13 @@ object BackupManager {
                 sectionPaint
             )
             y += 15f
-            if (summary.loan.note.isNotBlank()) {
+            val cleanLoanNote = summary.loan.note
+                .replace("[FUND_LOAN_BORROW]", "", ignoreCase = true)
+                .replace("[FUND_LOAN]", "", ignoreCase = true)
+                .trim()
+            if (cleanLoanNote.isNotBlank()) {
                 canvas.drawText(
-                    if (isBn) "নোট: ${summary.loan.note}" else "Note: ${summary.loan.note}",
+                    if (isBn) "নোট: $cleanLoanNote" else "Note: $cleanLoanNote",
                     44f,
                     y,
                     subtitlePaint
@@ -662,7 +689,11 @@ object BackupManager {
                     if (isBn) " (+${AccountingEngine.formatAmount(act.interestPortion, loanSym)} সুদ)"
                     else " (+${AccountingEngine.formatAmount(act.interestPortion, loanSym)} int.)"
                 } else ""
-                val notePart = if (act.note.isNotBlank()) " — ${act.note.take(36)}" else ""
+                val cleanActNote = act.note
+                    .replace("[FUND_LOAN_BORROW]", "", ignoreCase = true)
+                    .replace("[FUND_LOAN]", "", ignoreCase = true)
+                    .trim()
+                val notePart = if (cleanActNote.isNotBlank()) " — ${cleanActNote.take(36)}" else ""
                 canvas.drawText("• $actDate", 48f, y, bodyPaint)
                 canvas.drawText(actLabel, 135f, y, boldBodyPaint)
                 canvas.drawText(

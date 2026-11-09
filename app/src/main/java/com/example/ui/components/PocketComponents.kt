@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
@@ -1095,17 +1096,17 @@ data class WalletIconOption(
 )
 
 val WalletIconPickerOptions = listOf(
-    WalletIconOption("CASH", "Cash", "#2E9E5B", R.drawable.wallet_icon_cash),
-    WalletIconOption("BANK", "Bank", "#2563EB", R.drawable.wallet_icon_bank),
-    WalletIconOption("MTB", "MTB", "#006A4E", R.drawable.wallet_icon_mtb),
-    WalletIconOption("BRAC", "Brac", "#0072BC", R.drawable.wallet_icon_brac),
-    WalletIconOption("BKASH", "Bkash", "#E2136E", R.drawable.wallet_icon_bkash),
-    WalletIconOption("NAGAD", "Nagad", "#F37021", R.drawable.wallet_icon_nagad),
-    WalletIconOption("ROCKET", "Rocket", "#8C3494", R.drawable.wallet_icon_rocket),
-    WalletIconOption("RAPID_PASS", "Rapid Pass", "#1E3A8A", R.drawable.wallet_icon_rapid_pass),
-    WalletIconOption("CARD", "Card", "#DC2626", R.drawable.wallet_icon_card),
-    WalletIconOption("SAVINGS", "Savings", "#F15A24", R.drawable.wallet_icon_savings),
-    WalletIconOption("FUND", "Fund", "#0EA5E9", R.drawable.wallet_icon_savings)
+    WalletIconOption("CASH", "Cash", "#2E9E5B", R.drawable.ic_wallet_vec_cash),
+    WalletIconOption("BANK", "Bank", "#2563EB", R.drawable.ic_wallet_vec_bank),
+    WalletIconOption("MTB", "MTB", "#006A4E", R.drawable.ic_wallet_vec_mtb),
+    WalletIconOption("BRAC", "Brac", "#0072BC", R.drawable.ic_wallet_vec_brac),
+    WalletIconOption("BKASH", "Bkash", "#E2136E", R.drawable.ic_wallet_vec_bkash),
+    WalletIconOption("NAGAD", "Nagad", "#F37021", R.drawable.ic_wallet_vec_nagad),
+    WalletIconOption("ROCKET", "Rocket", "#8C3494", R.drawable.ic_wallet_vec_rocket),
+    WalletIconOption("RAPID_PASS", "Rapid Pass", "#1E3A8A", R.drawable.ic_wallet_vec_rapid_pass),
+    WalletIconOption("CARD", "Card", "#DC2626", R.drawable.ic_wallet_vec_card),
+    WalletIconOption("SAVINGS", "Savings", "#F15A24", R.drawable.ic_wallet_vec_savings),
+    WalletIconOption("FUND", "Fund", "#0EA5E9", R.drawable.ic_wallet_vec_savings)
 )
 
 val AvailableIconNames = listOf(
@@ -1272,7 +1273,7 @@ fun UserProfileBadge(
                 .size(avatarSize)
                 .clip(CircleShape)
                 .background(LocalPocketColors.current.surfaceElevated)
-                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.85f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             if (imageBitmap != null) {
@@ -1331,16 +1332,16 @@ fun resolveWalletDrawableRes(iconName: String, walletNameHint: String = ""): Int
     val hasWalletHint = lowerName.isNotEmpty()
 
     return when {
-        upperIcon == "BKASH" || lowerName.contains("bkash") -> R.drawable.wallet_icon_bkash
-        upperIcon == "NAGAD" || lowerName.contains("nagad") -> R.drawable.wallet_icon_nagad
-        upperIcon == "ROCKET" || lowerName.contains("rocket") -> R.drawable.wallet_icon_rocket
-        upperIcon == "MTB" || upperIcon == "MTB_BANK" || lowerName == "mtb" || lowerName.contains("mutual trust") -> R.drawable.wallet_icon_mtb
-        upperIcon == "BRAC" || upperIcon == "BRAC_BANK" || lowerName.contains("brac") -> R.drawable.wallet_icon_brac
-        upperIcon == "BANK" || (hasWalletHint && (lowerName == "bank" || lowerName == "bank account")) -> R.drawable.wallet_icon_bank
-        upperIcon == "RAPID_PASS" || (hasWalletHint && (lowerName.contains("rapid pass") || lowerName.contains("metro"))) -> R.drawable.wallet_icon_rapid_pass
-        upperIcon == "CARD" || (hasWalletHint && (lowerName == "card" || lowerName.contains("credit card") || lowerName.contains("debit card"))) -> R.drawable.wallet_icon_card
-        (hasWalletHint && lowerName == "savings") || (upperIcon == "SAVINGS" && hasWalletHint) -> R.drawable.wallet_icon_savings
-        upperIcon == "CASH" || (hasWalletHint && lowerName == "cash") -> R.drawable.wallet_icon_cash
+        upperIcon == "BKASH" || lowerName.contains("bkash") -> R.drawable.ic_wallet_vec_bkash
+        upperIcon == "NAGAD" || lowerName.contains("nagad") -> R.drawable.ic_wallet_vec_nagad
+        upperIcon == "ROCKET" || lowerName.contains("rocket") -> R.drawable.ic_wallet_vec_rocket
+        upperIcon == "MTB" || upperIcon == "MTB_BANK" || lowerName == "mtb" || lowerName.contains("mutual trust") -> R.drawable.ic_wallet_vec_mtb
+        upperIcon == "BRAC" || upperIcon == "BRAC_BANK" || lowerName.contains("brac") -> R.drawable.ic_wallet_vec_brac
+        upperIcon == "BANK" || (hasWalletHint && (lowerName == "bank" || lowerName == "bank account")) -> R.drawable.ic_wallet_vec_bank
+        upperIcon == "RAPID_PASS" || (hasWalletHint && (lowerName.contains("rapid pass") || lowerName.contains("metro"))) -> R.drawable.ic_wallet_vec_rapid_pass
+        upperIcon == "CARD" || (hasWalletHint && (lowerName == "card" || lowerName.contains("credit card") || lowerName.contains("debit card"))) -> R.drawable.ic_wallet_vec_card
+        upperIcon == "SAVINGS" || upperIcon == "FUND" || (hasWalletHint && (lowerName.contains("savings") || lowerName.contains("fund"))) -> R.drawable.ic_wallet_vec_savings
+        upperIcon == "CASH" || (hasWalletHint && lowerName.contains("cash")) -> R.drawable.ic_wallet_vec_cash
         else -> null
     }
 }
@@ -1349,6 +1350,70 @@ fun resolveWalletDrawableRes(iconName: String, walletNameHint: String = ""): Int
  * Renders the 10 official circular wallet icons with uniform alignment, custom user-attached images from
  * local storage (`CUSTOM_URI:<path>`), or Material category icons (in green for income / red for expense).
  */
+@Composable
+fun pocketLiquidGlassBorderBrush(isHighlighted: Boolean = false): Brush {
+    val pocketColors = LocalPocketColors.current
+    val primary = MaterialTheme.colorScheme.primary
+    return if (isHighlighted) {
+        Brush.verticalGradient(
+            colors = listOf(
+                primary.copy(alpha = 0.85f),
+                primary.copy(alpha = 0.35f)
+            )
+        )
+    } else if (pocketColors.isDark) {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.16f),
+                pocketColors.cardBorder.copy(alpha = 0.25f)
+            )
+        )
+    } else {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.85f),
+                pocketColors.cardBorder.copy(alpha = 0.35f)
+            )
+        )
+    }
+}
+
+/**
+ * Computes the synchronized Hero Card & Navigation Dock surface color:
+ * 10% darker in Dark theme (reduced HSV brightness), 10% brighter in Light theme,
+ * with 10% more opacity than the global settings box opacity.
+ */
+fun computeDockAndHeroSurfaceColor(
+    baseHex: String,
+    baseOpacity: Float,
+    isDark: Boolean
+): Color {
+    val fallback = if (isDark) Color(0xFF2A2A2A) else Color(0xFFFFFFFF)
+    val baseColor = parseHexColor(baseHex, fallback)
+    val r = baseColor.red
+    val g = baseColor.green
+    val b = baseColor.blue
+
+    val hsv = FloatArray(3)
+    android.graphics.Color.RGBToHSV(
+        (r * 255).toInt().coerceIn(0, 255),
+        (g * 255).toInt().coerceIn(0, 255),
+        (b * 255).toInt().coerceIn(0, 255),
+        hsv
+    )
+
+    if (isDark) {
+        hsv[2] = (hsv[2] - 0.10f).coerceIn(0f, 1f)
+    } else {
+        hsv[2] = (hsv[2] + 0.10f).coerceIn(0f, 1f)
+    }
+
+    val adjustedRgb = android.graphics.Color.HSVToColor(hsv)
+    val targetAlpha = (baseOpacity + 0.10f).coerceIn(0.05f, 1f)
+
+    return Color(adjustedRgb).copy(alpha = targetAlpha)
+}
+
 @Composable
 fun IconBadgeCircle(
     iconName: String,
@@ -1359,6 +1424,7 @@ fun IconBadgeCircle(
 ) {
     val pocketColors = LocalPocketColors.current
     val isDark = pocketColors.isDark
+    val glassBorderBrush = pocketLiquidGlassBorderBrush()
 
     if (iconName.startsWith("CUSTOM_URI:")) {
         val path = iconName.removePrefix("CUSTOM_URI:")
@@ -1376,81 +1442,59 @@ fun IconBadgeCircle(
         }
     }
 
-    val walletDrawable = resolveWalletDrawableRes(iconName, walletNameHint)
-    if (walletDrawable != null) {
-        val accentColor = MaterialTheme.colorScheme.primary
-        // Always render wallet logos in the active accent color (`MaterialTheme.colorScheme.primary`)
-        // over a clean dark or light circular badge background.
-        // Both white and orange artwork in the default wallet PNGs have high Red (R ≈ 241..255), while the circle background has R ≈ 28..30.
-        val accentMatrix = remember(isDark, accentColor) {
-            val bgR = if (isDark) 20f else 244f
-            val bgG = if (isDark) 20f else 244f
-            val bgB = if (isDark) 22f else 246f
-            val fgR = accentColor.red * 255f
-            val fgG = accentColor.green * 255f
-            val fgB = accentColor.blue * 255f
-            val span = 217f // 245f - 28f
-            val scaleR = (fgR - bgR) / span
-            val scaleG = (fgG - bgG) / span
-            val scaleB = (fgB - bgB) / span
-            val offsetR = bgR - 28f * scaleR
-            val offsetG = bgG - 28f * scaleG
-            val offsetB = bgB - 28f * scaleB
-            ColorMatrix(
-                floatArrayOf(
-                    scaleR, 0f, 0f, 0f, offsetR,
-                    scaleG, 0f, 0f, 0f, offsetG,
-                    scaleB, 0f, 0f, 0f, offsetB,
-                    0f, 0f, 0f, 1f, 0f
-                )
-            )
-        }
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val isWalletIcon = walletNameHint.isNotBlank() ||
+        listOf("CASH", "BANK", "BKASH", "NAGAD", "ROCKET", "SAVINGS", "FUND", "CARD", "RAPID_PASS", "MTB", "BRAC").contains(iconName.uppercase(Locale.ENGLISH))
+
+    if (isWalletIcon) {
+        val customWalletVecRes = resolveWalletDrawableRes(iconName, walletNameHint)
         Box(
             modifier = Modifier
                 .size(size)
                 .clip(CircleShape)
-                .border(0.75.dp, pocketColors.cardBorder, CircleShape),
+                .background(Color.Transparent)
+                .border(0.6.dp, glassBorderBrush, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Image(
-                painter = painterResource(id = walletDrawable),
-                contentDescription = walletNameHint.ifBlank { iconName },
-                contentScale = ContentScale.Fit,
-                colorFilter = ColorFilter.colorMatrix(accentMatrix),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-            )
+            if (customWalletVecRes != null) {
+                Icon(
+                    painter = painterResource(id = customWalletVecRes),
+                    contentDescription = walletNameHint.ifBlank { iconName },
+                    tint = accentPrimary,
+                    modifier = Modifier.size(iconSize)
+                )
+            } else {
+                Icon(
+                    imageVector = iconForName(iconName),
+                    contentDescription = walletNameHint.ifBlank { iconName },
+                    tint = accentPrimary,
+                    modifier = Modifier.size(iconSize)
+                )
+            }
         }
         return
     }
 
-    val isWalletIcon = walletNameHint.isNotBlank()
-    val tint = if (isWalletIcon) {
-        MaterialTheme.colorScheme.primary
+    // Category icons: vibrant multi-colored tint (red, green, yellow, blue, purple) with soft frosted glass background
+    val vibrantCategoryColor = if (colorHex.isNotBlank()) {
+        parseHexColor(colorHex, accentPrimary)
     } else {
-        parseHexColor(colorHex)
+        accentPrimary
     }
-    val badgeBg = if (isWalletIcon) {
-        if (isDark) Color(0xFF18181B) else Color(0xFFF4F4F5)
-    } else {
-        tint.copy(alpha = 0.22f)
-    }
+    val badgeBg = vibrantCategoryColor.copy(alpha = if (isDark) 0.18f else 0.14f)
+
     Box(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
             .background(badgeBg)
-            .then(
-                if (isWalletIcon) Modifier.border(0.75.dp, pocketColors.cardBorder, CircleShape)
-                else Modifier
-            ),
+            .border(0.6.dp, glassBorderBrush, CircleShape),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = iconForName(iconName),
             contentDescription = null,
-            tint = tint,
+            tint = vibrantCategoryColor,
             modifier = Modifier.size(iconSize)
         )
     }
@@ -1516,15 +1560,15 @@ fun PocketTopBar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     PocketBurgundyLogo(
-                        size = 42.dp,
+                        size = 34.dp,
                         onClick = onLogoClick,
                         modifier = Modifier.testTag("top_bar_pocket_logo")
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Pocket",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge.copy(letterSpacing = (-0.4).sp),
+                        fontWeight = FontWeight.SemiBold,
                         color = if (LocalPocketColors.current.isDark) Color.White else Color.Black,
                         maxLines = 1
                     )
@@ -1555,7 +1599,9 @@ fun PocketTopBar(
 fun LiquidBottomNavigationBar(
     activeTab: BottomNavTab,
     onSelectTab: (BottomNavTab) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    boxColorHex: String = "#2A2A2A",
+    boxOpacity: Float = 0.25f
 ) {
     val pocketColors = LocalPocketColors.current
     val tabs = BottomNavTab.entries
@@ -1582,19 +1628,38 @@ fun LiquidBottomNavigationBar(
     val activePrimary = MaterialTheme.colorScheme.primary
     val activeHighlight = pocketColors.primaryHighlight
 
+    val glassNavSurface = remember(boxColorHex, boxOpacity, pocketColors.isDark) {
+        computeDockAndHeroSurfaceColor(boxColorHex, boxOpacity, pocketColors.isDark)
+    }
+    val glassNavBorderBrush = Brush.verticalGradient(
+        colors = if (pocketColors.isDark) {
+            listOf(
+                Color.White.copy(alpha = 0.22f),
+                pocketColors.cardBorder.copy(alpha = 0.45f)
+            )
+        } else {
+            listOf(
+                Color.White.copy(alpha = 0.85f),
+                pocketColors.cardBorder.copy(alpha = 0.45f)
+            )
+        }
+    )
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = pocketColors.surfaceElevated,
-        border = BorderStroke(1.dp, pocketColors.cardBorder)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        shape = RoundedCornerShape(32.dp),
+        color = glassNavSurface,
+        tonalElevation = 8.dp,
+        shadowElevation = 16.dp,
+        border = BorderStroke(0.8.dp, glassNavBorderBrush)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(68.dp)
+                .height(64.dp)
                 .drawBehind {
                     val tabCount = tabs.size.coerceAtLeast(1)
                     val slotWidth = size.width / tabCount
@@ -1819,6 +1884,7 @@ fun LedgerEntryRowCard(
         formatRelativeDate(entry.date)
     }
 
+    val glassBorderBrush = pocketLiquidGlassBorderBrush(isHighlighted = isSelected)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1839,8 +1905,8 @@ fun LedgerEntryRowCard(
         shape = RoundedCornerShape(18.dp),
         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface,
         border = BorderStroke(
-            width = if (isSelected) 1.5.dp else 1.dp,
-            color = if (isSelected) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
+            width = if (isSelected) 1.4.dp else 0.5.dp,
+            brush = glassBorderBrush
         )
     ) {
         Row(
@@ -2209,10 +2275,21 @@ fun rememberUniversalImagePickerLauncher(
     }
 }
 
+enum class PocketHapticType {
+    STANDARD,
+    LONG_PRESS,
+    SUCCESS_MULTI_PULSE,
+    SYNC_THRESHOLD
+}
+
 /**
  * Triggers strong, tactile haptic feedback for buttons, switches, PIN pad entries, speed-dial actions, and transactions.
  */
-fun performPocketHaptic(view: View?, isLongPress: Boolean = false) {
+fun performPocketHaptic(
+    view: View?,
+    isLongPress: Boolean = false,
+    hapticType: PocketHapticType = if (isLongPress) PocketHapticType.LONG_PRESS else PocketHapticType.STANDARD
+) {
     if (view == null) return
     runCatching {
         val context = view.context
@@ -2226,15 +2303,35 @@ fun performPocketHaptic(view: View?, isLongPress: Boolean = false) {
 
         if (vibrator != null && vibrator.hasVibrator()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val duration = if (isLongPress) 85L else 45L
-                val amplitude = if (isLongPress) 255 else 225
-                vibrator.vibrate(VibrationEffect.createOneShot(duration, amplitude))
+                when (hapticType) {
+                    PocketHapticType.SUCCESS_MULTI_PULSE -> {
+                        val timings = longArrayOf(0, 35, 45, 45)
+                        val amplitudes = intArrayOf(0, 220, 0, 255)
+                        vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                    }
+                    PocketHapticType.SYNC_THRESHOLD -> {
+                        val timings = longArrayOf(0, 25, 30, 35)
+                        val amplitudes = intArrayOf(0, 180, 0, 240)
+                        vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                    }
+                    PocketHapticType.LONG_PRESS -> {
+                        vibrator.vibrate(VibrationEffect.createOneShot(85L, 255))
+                    }
+                    PocketHapticType.STANDARD -> {
+                        vibrator.vibrate(VibrationEffect.createOneShot(45L, 225))
+                    }
+                }
             } else {
                 @Suppress("DEPRECATION")
-                vibrator.vibrate(if (isLongPress) 85L else 45L)
+                when (hapticType) {
+                    PocketHapticType.SUCCESS_MULTI_PULSE -> vibrator.vibrate(longArrayOf(0, 35, 45, 45), -1)
+                    PocketHapticType.SYNC_THRESHOLD -> vibrator.vibrate(longArrayOf(0, 25, 30, 35), -1)
+                    PocketHapticType.LONG_PRESS -> vibrator.vibrate(85L)
+                    PocketHapticType.STANDARD -> vibrator.vibrate(45L)
+                }
             }
         } else {
-            val constant = if (isLongPress) {
+            val constant = if (hapticType == PocketHapticType.LONG_PRESS) {
                 HapticFeedbackConstants.LONG_PRESS
             } else {
                 HapticFeedbackConstants.CONFIRM

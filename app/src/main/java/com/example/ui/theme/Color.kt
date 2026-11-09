@@ -9,22 +9,22 @@ val PocketSurface = Color(0x80141416) // 50% transparent neutral dark surface ov
 val PocketSurfaceElevated = Color(0x801F1F23) // 50% transparent elevated neutral dark surface
 val PocketSurfaceSelected = Color(0x804A2012) // 50% transparent selected tint (overridden dynamically by accentColor)
 val PocketInputBackground = Color(0x80121215) // 50% transparent
-val PocketDividerBorder = Color(0x803F3F46) // 50% transparent neutral gray border
+val PocketDividerBorder = Color(0x5952525B) // Subtle iOS-style specular glass border
 
-// ~85% Opaque Overlay Popup Surfaces (0xD9 = 85% opacity / 15% transparency for popups, New Record, New Wallet, etc.)
-val PocketOverlaySurface = Color(0xD9121215)
-val PocketOverlayCard = Color(0xD91C1C21)
+// ~93% Opaque Frosted Glass Overlay Popup Surfaces for crisp legibility
+val PocketOverlaySurface = Color(0xED141418)
+val PocketOverlayCard = Color(0xF01C1C22)
 
-// Light Mode Base (Pure White base background, Black & Gray text, ~85% opaque overlays)
+// Light Mode Base (Pure White base background, Black & Gray text, ~94% opaque frosted overlays)
 val PocketLightBase = Color(0xFFFFFFFF)
 val PocketLightBackground = Color(0x00FFFFFF)
 val PocketLightSurface = Color(0x80FFFFFF) // 50% transparent grid box over white base
-val PocketLightSurfaceElevated = Color(0x80F4F4F5) // 50% transparent neutral light gray
+val PocketLightSurfaceElevated = Color(0x88F4F4F6) // Soft translucent light gray
 val PocketLightSurfaceSelected = Color(0x80FFE0D4) // 50% transparent accent tint (overridden dynamically by accentColor)
 val PocketLightInputBackground = Color(0x80FFFFFF) // 50% transparent
-val PocketLightDividerBorder = Color(0xE6686873) // Darker neutral gray border for clear box visibility in Light mode
-val PocketLightOverlaySurface = Color(0xD9FFFFFF) // ~85% opaque overlay popup in Light mode
-val PocketLightOverlayCard = Color(0xD9F4F4F5) // ~85% opaque overlay card in Light mode
+val PocketLightDividerBorder = Color(0x4D71717A) // Subtle glass border in Light mode
+val PocketLightOverlaySurface = Color(0xF2FFFFFF) // ~95% opaque frosted overlay popup in Light mode
+val PocketLightOverlayCard = Color(0xF2F4F4F6) // ~95% opaque frosted overlay card in Light mode
 val PocketLightPrimaryText = Color(0xFF09090B) // Pure Black text in Light mode
 val PocketLightSecondaryText = Color(0xFF52525B) // Neutral Gray secondary text in Light mode
 val PocketLightMutedText = Color(0xFF71717A) // Neutral Gray muted text in Light mode

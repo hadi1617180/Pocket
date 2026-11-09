@@ -24,7 +24,8 @@ data class WidgetSnapshotData(
     val activeWalletSummaries: List<WalletBalanceSummary>,
     val allWalletSummaries: List<WalletBalanceSummary>,
     val hideBalancesPrivacy: Boolean = false,
-    val accentColorHex: String = "#F97316"
+    val accentColorHex: String = "#F97316",
+    val fundFeatureEnabled: Boolean = false
 )
 
 object PocketWidgetUpdater {
@@ -79,6 +80,7 @@ object PocketWidgetUpdater {
         val symbol = settings?.currencySymbol ?: "৳"
         val hidePrivacy = settings?.hideBalancesPrivacy ?: false
         val accentHex = settings?.accentColorHex ?: "#F97316"
+        val fundEnabled = settings?.fundFeatureEnabled ?: false
 
         val summaries = wallets.map { w ->
             AccountingEngine.calculateWalletSummary(
@@ -87,7 +89,8 @@ object PocketWidgetUpdater {
                 transfers = transfers,
                 loans = loans,
                 loanActivities = loanActivities,
-                adjustments = adjustments
+                adjustments = adjustments,
+                fundFeatureEnabled = fundEnabled
             )
         }
         val active = summaries.filter { !it.wallet.isArchived }
@@ -104,7 +107,8 @@ object PocketWidgetUpdater {
             activeWalletSummaries = active,
             allWalletSummaries = summaries,
             hideBalancesPrivacy = hidePrivacy,
-            accentColorHex = accentHex
+            accentColorHex = accentHex,
+            fundFeatureEnabled = fundEnabled
         )
     }
 
@@ -270,12 +274,20 @@ object PocketWidgetUpdater {
             rowIds.forEachIndexed { index, (rowId, nameId, balId) ->
                 val summary = selectedSummaries.getOrNull(index)
                 if (summary != null) {
-                    val wSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                    val w = summary.wallet
+                    val wSym = AccountingEngine.currencySymbolForCode(w.currency)
+                    val isCashWallet = w.name.trim().equals("Cash", ignoreCase = true) ||
+                        w.type.trim().equals("CASH", ignoreCase = true)
+                    val displayBal = if (isCashWallet && snapshot.fundFeatureEnabled && !w.isFundWallet) {
+                        summary.personalBalance
+                    } else {
+                        summary.currentBalance
+                    }
                     views.setViewVisibility(rowId, View.VISIBLE)
-                    views.setTextViewText(nameId, com.example.data.PocketLocalizer.localizeWalletName(summary.wallet.name))
+                    views.setTextViewText(nameId, com.example.data.PocketLocalizer.localizeWalletName(w.name))
                     views.setTextViewText(
                         balId,
-                        formatWidgetMoney(summary.currentBalance, wSym, snapshot.hideBalancesPrivacy, includeDecimals = false)
+                        formatWidgetMoney(displayBal, wSym, snapshot.hideBalancesPrivacy, includeDecimals = false)
                     )
                     views.setOnClickPendingIntent(
                         rowId,
@@ -283,7 +295,7 @@ object PocketWidgetUpdater {
                             context = context,
                             requestCode = appWidgetId * 100 + index + 1,
                             destination = DEST_WALLET_DETAIL,
-                            walletId = summary.wallet.id
+                            walletId = w.id
                         )
                     )
                 } else {
@@ -312,13 +324,20 @@ object PocketWidgetUpdater {
         if (targetSummary != null) {
             val w = targetSummary.wallet
             val wSym = AccountingEngine.currencySymbolForCode(w.currency)
+            val isCashWallet = w.name.trim().equals("Cash", ignoreCase = true) ||
+                w.type.trim().equals("CASH", ignoreCase = true)
+            val displayBal = if (isCashWallet && snapshot.fundFeatureEnabled && !w.isFundWallet) {
+                targetSummary.personalBalance
+            } else {
+                targetSummary.currentBalance
+            }
             val badgeText = if (w.isArchived) "${w.type} · ARCHIVED" else w.type
             views.setTextViewText(R.id.widget_single_wallet_badge, com.example.data.PocketLocalizer.translate(badgeText))
             views.setTextColor(R.id.widget_single_wallet_badge, accentInt)
             views.setTextViewText(R.id.widget_single_wallet_name, com.example.data.PocketLocalizer.localizeWalletName(w.name))
             views.setTextViewText(
                 R.id.widget_single_wallet_balance,
-                formatWidgetMoney(targetSummary.currentBalance, wSym, snapshot.hideBalancesPrivacy)
+                formatWidgetMoney(displayBal, wSym, snapshot.hideBalancesPrivacy)
             )
             views.setOnClickPendingIntent(
                 R.id.widget_single_wallet_root,

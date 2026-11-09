@@ -142,10 +142,16 @@ data class PocketUiState(
         get() = primaryFundWalletSummary != null
 
     val fundEnabledSummaries: List<WalletBalanceSummary>
-        get() = if (isFundEnabled) activeWalletSummaries.filter { it.hasVirtualFund } else emptyList()
+        get() = if (isFundEnabled) {
+            activeWalletSummaries.filter {
+                kotlin.math.abs(it.fundBalance) > 0.005 || it.fundBorrowedDue > 0.005 || it.fundOfficialSpent > 0.005
+            }
+        } else emptyList()
 
     val hasActiveVirtualFund: Boolean
-        get() = isFundEnabled && fundEnabledSummaries.isNotEmpty()
+        get() = isFundEnabled && activeWalletSummaries.any {
+            kotlin.math.abs(it.fundBalance) > 0.005 || it.fundBorrowedDue > 0.005
+        }
 
     val totalFundCashBalance: Double
         get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(
@@ -232,6 +238,25 @@ private data class RawDatabaseBundle(
     val recurringTransactions: List<RecurringTransactionEntity>,
     val savingsGoals: List<SavingsGoalEntity>,
     val settings: AppSettingsEntity?
+)
+
+private data class ComputedAccountingBundle(
+    val db: RawDatabaseBundle,
+    val settings: AppSettingsEntity,
+    val effectiveHasCompletedOnboarding: Boolean,
+    val year: Int,
+    val month: Int,
+    val activeReportCurrency: String,
+    val sortedWallets: List<WalletEntity>,
+    val walletSummaries: List<WalletBalanceSummary>,
+    val activeSummaries: List<WalletBalanceSummary>,
+    val archivedSummaries: List<WalletBalanceSummary>,
+    val totalBalance: Double,
+    val foreignCurrencyTotals: List<Pair<String, Double>>,
+    val loanSummaries: List<LoanCalculatedSummary>,
+    val ledger: List<UnifiedLedgerEntry>,
+    val monthlyReport: MonthlyReportSummary,
+    val currentMonthReport: MonthlyReportSummary
 )
 
 class PocketViewModel(
@@ -1206,36 +1231,14 @@ class PocketViewModel(
         )
     }
 
-    val uiState: StateFlow<PocketUiState> = combine(
+    private val computedAccountingFlow: Flow<ComputedAccountingBundle> = combine(
         rawDbFlow,
-        _navStack,
         _selectedYear,
         _selectedMonth,
-        combine(
-            combine(
-                _isAppUnlocked,
-                _statusMessage,
-                _cloudAuthState,
-                _pendingRecurringPayId,
-                _upgradeModalState
-            ) { u, m, c, p, up ->
-                listOf(u, m, c, p, up)
-            },
-            combine(_selectedReportCurrency, _onboardingStage, _hasCompletedOnboardingOverride) { rc, stage, obOverride ->
-                Triple(rc, stage, obOverride)
-            }
-        ) { fiveList, triple ->
-            listOf(fiveList[0], fiveList[1], fiveList[2], fiveList[3], fiveList[4], triple.first, triple.second, triple.third)
-        }
-    ) { db, navStack, year, month, extraList ->
-        val unlocked = extraList[0] as Boolean
-        val message = extraList[1] as String?
-        val cloudAuth = extraList[2] as CloudAuthUiState
-        val pendingRecurringId = extraList[3] as Long?
-        val upgradeModal = extraList[4] as UpgradeModalState
-        val requestedReportCurrency = (extraList[5] as String).ifBlank { "BDT" }
-        val onboardingStage = extraList[6] as OnboardingStage
-        val onboardingOverride = extraList[7] as Boolean?
+        _selectedReportCurrency,
+        _hasCompletedOnboardingOverride
+    ) { db, year, month, requestedReportCurrencyRaw, onboardingOverride ->
+        val requestedReportCurrency = requestedReportCurrencyRaw.ifBlank { "BDT" }
         val rawSettings = db.settings ?: AppSettingsEntity()
         val effectiveHasCompletedOnboarding = onboardingOverride ?: rawSettings.hasCompletedOnboarding
         val normalizedBoxHex = if (rawSettings.boxColorHex.isBlank() || rawSettings.boxColorHex.equals("#141416", ignoreCase = true)) {
@@ -1257,7 +1260,6 @@ class PocketViewModel(
             backgroundOpacity = normalizedBgOpacity
         )
         PocketLocalizer.currentLanguage = settings.appLanguage
-        val effectiveUnlocked = !settings.appLockEnabled || settings.appLockPin.isBlank() || unlocked
 
         val sortedWallets = db.wallets.sortedWith(
             compareBy<WalletEntity> {
@@ -1281,7 +1283,6 @@ class PocketViewModel(
                     fundFeatureEnabled = isFundEnabled
                 )
             }
-        // Reconcile cross-wallet Fund returns (e.g. borrowed from Wallet A's Fund, returned into Wallet B's Fund)
         var remainingCrossWalletReturnPool = if (isFundEnabled) {
             rawWalletSummaries.sumOf { kotlin.math.max(0.0, it.fundReturnedTotal - it.fundBorrowedTotal) }
         } else 0.0
@@ -1376,6 +1377,49 @@ class PocketViewModel(
             )
         }
 
+        ComputedAccountingBundle(
+            db = db,
+            settings = settings,
+            effectiveHasCompletedOnboarding = effectiveHasCompletedOnboarding,
+            year = year,
+            month = month,
+            activeReportCurrency = activeReportCurrency,
+            sortedWallets = sortedWallets,
+            walletSummaries = walletSummaries,
+            activeSummaries = activeSummaries,
+            archivedSummaries = archivedSummaries,
+            totalBalance = totalBalance,
+            foreignCurrencyTotals = foreignCurrencyTotals,
+            loanSummaries = loanSummaries,
+            ledger = ledger,
+            monthlyReport = monthlyReport,
+            currentMonthReport = currentMonthReport
+        )
+    }.flowOn(Dispatchers.Default)
+
+    val uiState: StateFlow<PocketUiState> = combine(
+        computedAccountingFlow,
+        _navStack,
+        combine(
+            _isAppUnlocked,
+            _statusMessage,
+            _cloudAuthState,
+            _pendingRecurringPayId,
+            _upgradeModalState
+        ) { u, m, c, p, up ->
+            listOf(u, m, c, p, up)
+        },
+        _onboardingStage
+    ) { acc, navStack, fiveList, onboardingStage ->
+        val unlocked = fiveList[0] as Boolean
+        val message = fiveList[1] as String?
+        val cloudAuth = fiveList[2] as CloudAuthUiState
+        val pendingRecurringId = fiveList[3] as Long?
+        val upgradeModal = fiveList[4] as UpgradeModalState
+        val settings = acc.settings
+        val db = acc.db
+        val effectiveUnlocked = !settings.appLockEnabled || settings.appLockPin.isBlank() || unlocked
+
         val currentScreen = navStack.lastOrNull() ?: PocketScreen.Wallets
         val bottomTab = when (currentScreen) {
             is PocketScreen.Home, is PocketScreen.Wallets, is PocketScreen.WalletDetail, is PocketScreen.BalanceAdjustment -> BottomNavTab.BALANCES
@@ -1387,35 +1431,35 @@ class PocketViewModel(
 
         PocketUiState(
             isLoading = false,
-            hasCompletedOnboarding = effectiveHasCompletedOnboarding,
+            hasCompletedOnboarding = acc.effectiveHasCompletedOnboarding,
             settings = settings,
             onboardingStage = onboardingStage,
             isAppUnlocked = effectiveUnlocked,
             currentScreen = currentScreen,
             activeBottomTab = bottomTab,
-            selectedYear = year,
-            selectedMonth = month,
-            selectedReportCurrency = activeReportCurrency,
-            wallets = sortedWallets,
-            walletSummaries = walletSummaries,
-            activeWalletSummaries = activeSummaries,
-            archivedWalletSummaries = archivedSummaries,
-            totalAvailableBalance = totalBalance,
-            foreignCurrencyTotals = foreignCurrencyTotals,
+            selectedYear = acc.year,
+            selectedMonth = acc.month,
+            selectedReportCurrency = acc.activeReportCurrency,
+            wallets = acc.sortedWallets,
+            walletSummaries = acc.walletSummaries,
+            activeWalletSummaries = acc.activeSummaries,
+            archivedWalletSummaries = acc.archivedSummaries,
+            totalAvailableBalance = acc.totalBalance,
+            foreignCurrencyTotals = acc.foreignCurrencyTotals,
             categories = db.categories,
             transactions = db.transactions,
             transfers = db.transfers,
             loans = db.loans,
             loanActivities = db.loanActivities,
-            loanSummaries = loanSummaries,
+            loanSummaries = acc.loanSummaries,
             adjustments = db.adjustments,
             recurringTransactions = db.recurringTransactions,
             savingsGoals = db.savingsGoals,
             pendingRecurringPayId = pendingRecurringId,
             pendingCloudConflict = cloudAuth.pendingConflict,
-            unifiedLedger = ledger,
-            monthlyReport = monthlyReport,
-            currentMonthReport = currentMonthReport,
+            unifiedLedger = acc.ledger,
+            monthlyReport = acc.monthlyReport,
+            currentMonthReport = acc.currentMonthReport,
             statusMessage = message,
             googleAccountEmail = cloudAuth.email,
             googleAccountName = cloudAuth.displayName,
@@ -1429,7 +1473,6 @@ class PocketViewModel(
             activationSuccess = upgradeModal.success
         )
     }
-        .flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.Eagerly,
@@ -2067,7 +2110,8 @@ class PocketViewModel(
         chosenWalletId: Long,
         finalAmount: Double,
         note: String = "",
-        serviceFeeAmount: Double = 0.0
+        serviceFeeAmount: Double = 0.0,
+        fundMode: String = "PERSONAL"
     ) {
         val s = uiState.value.settings
         val todayCount = uiState.value.todayTransactionCount
@@ -2079,20 +2123,31 @@ class PocketViewModel(
         viewModelScope.launch {
             val recurring = uiState.value.recurringTransactions.firstOrNull { it.id == recurringId }
             val wallet = uiState.value.wallets.firstOrNull { it.id == chosenWalletId }
+            if (wallet != null && !wallet.isFundWallet && !wallet.hasVirtualFund &&
+                fundMode.uppercase() in listOf("FUND_EXPENSE", "FUND_BORROW", "FUND_IN")
+            ) {
+                repository.saveWallet(wallet.withVirtualFund(enabled = true, openingFund = wallet.openingFundBalance))
+            }
             val walletName = wallet?.name ?: "Wallet"
             val txId = repository.confirmAndPayRecurringTransaction(
                 recurringId = recurringId,
                 chosenWalletId = chosenWalletId,
                 finalAmount = finalAmount,
                 note = note,
-                serviceFeeAmount = serviceFeeAmount
+                serviceFeeAmount = serviceFeeAmount,
+                fundMode = fundMode
             )
             _pendingRecurringPayId.value = null
             if (txId != 0L) {
                 val symbol = AccountingEngine.currencySymbolForCode(wallet?.currency ?: "BDT")
                 val formatted = AccountingEngine.formatMoney(finalAmount, symbol)
                 val verb = if (recurring?.type == TransactionType.INCOME.name) "Received" else "Paid"
-                _statusMessage.value = "$verb $formatted for '${recurring?.title ?: "Recurring"}' via $walletName."
+                val bucketLabel = when (fundMode.uppercase()) {
+                    "FUND_BORROW" -> "$walletName-Fund (Borrowed for Personal)"
+                    "FUND_EXPENSE", "FUND_IN" -> "$walletName-Fund"
+                    else -> if (uiState.value.isFundEnabled && wallet?.isFundWallet != true) "$walletName-Personal" else walletName
+                }
+                _statusMessage.value = "$verb $formatted for '${recurring?.title ?: "Recurring"}' via $bucketLabel."
             }
             notifyWidgetsChanged()
         }
@@ -2196,10 +2251,23 @@ class PocketViewModel(
     fun addOrWithdrawSavingsGoal(
         goal: SavingsGoalEntity,
         delta: Double,
-        transferWalletId: Long? = null
+        transferWalletId: Long? = null,
+        fundMode: String = "PERSONAL"
     ) {
-        val absAmount = AccountingEngine.roundCurrency(kotlin.math.abs(delta))
-        if (transferWalletId != null && absAmount > 0.0) {
+        val isAddingToGoal = delta >= 0.0
+        val requestedAbsAmount = AccountingEngine.roundCurrency(kotlin.math.abs(delta))
+        val effectiveAbsAmount = if (isAddingToGoal) {
+            requestedAbsAmount
+        } else {
+            AccountingEngine.roundCurrency(kotlin.math.min(requestedAbsAmount, goal.savedAmount.coerceAtLeast(0.0)))
+        }
+        if (effectiveAbsAmount <= 0.0) {
+            if (!isAddingToGoal && goal.savedAmount <= 0.0) {
+                _statusMessage.value = "No saved funds available to withdraw from '${goal.name}'."
+            }
+            return
+        }
+        if (transferWalletId != null && effectiveAbsAmount > 0.0) {
             val s = uiState.value.settings
             val todayCount = uiState.value.todayTransactionCount
             if (!SubscriptionManager.canAddTransactionToday(todayCount, s.subscriptionTier, s.subscriptionExpiresAt)) {
@@ -2208,10 +2276,16 @@ class PocketViewModel(
             }
         }
         viewModelScope.launch {
-            val nextSaved = AccountingEngine.roundCurrency((goal.savedAmount + delta).coerceAtLeast(0.0))
+            val signedDelta = if (isAddingToGoal) effectiveAbsAmount else -effectiveAbsAmount
+            val nextSaved = AccountingEngine.roundCurrency((goal.savedAmount + signedDelta).coerceAtLeast(0.0))
             repository.saveSavingsGoal(goal.copy(savedAmount = nextSaved))
-            if (transferWalletId != null && absAmount > 0.0) {
-                val isAddingToGoal = delta >= 0.0
+            val targetWallet = transferWalletId?.let { id -> uiState.value.wallets.firstOrNull { it.id == id } }
+            if (transferWalletId != null && effectiveAbsAmount > 0.0) {
+                if (targetWallet != null && !targetWallet.isFundWallet && !targetWallet.hasVirtualFund &&
+                    fundMode.uppercase() in listOf("FUND_EXPENSE", "FUND_BORROW", "FUND_IN")
+                ) {
+                    repository.saveWallet(targetWallet.withVirtualFund(enabled = true, openingFund = targetWallet.openingFundBalance))
+                }
                 val txType = if (isAddingToGoal) TransactionType.EXPENSE else TransactionType.INCOME
                 val activeCategories = uiState.value.categories.filter { !it.isArchived }
                 val categoriesPool = activeCategories.ifEmpty { uiState.value.categories }
@@ -2224,9 +2298,16 @@ class PocketViewModel(
                 } ?: categoriesPool.firstOrNull { it.type == txType.name }
                     ?: categoriesPool.firstOrNull()
                 if (matchedCategory != null) {
+                    val resolvedFundTag = when (fundMode.uppercase()) {
+                        "FUND_BORROW" -> if (isAddingToGoal) "FUND_BORROW" else "FUND_IN"
+                        "FUND_EXPENSE" -> if (isAddingToGoal) "FUND_EXPENSE" else "FUND_IN"
+                        "FUND_IN" -> "FUND_IN"
+                        else -> null
+                    }
+                    val combinedTags = if (resolvedFundTag != null) "SavingsGoal, $resolvedFundTag" else "SavingsGoal"
                     repository.saveTransaction(
                         TransactionEntity(
-                            amount = absAmount,
+                            amount = effectiveAbsAmount,
                             type = txType.name,
                             categoryId = matchedCategory.id,
                             walletId = transferWalletId,
@@ -2236,18 +2317,23 @@ class PocketViewModel(
                             } else {
                                 "Savings Goal Withdrawal: ${goal.name}"
                             },
-                            tags = "SavingsGoal"
+                            tags = combinedTags
                         )
                     )
                 }
             }
-            val targetWallet = transferWalletId?.let { id -> uiState.value.wallets.firstOrNull { it.id == id } }
             val walletSymbol = targetWallet?.currency?.takeIf { it.isNotBlank() }?.let { AccountingEngine.currencySymbolForCode(it) }
                 ?: uiState.value.settings.currencySymbol
-            val formattedDelta = AccountingEngine.formatMoney(absAmount, walletSymbol)
-            val verb = if (delta >= 0) "Added $formattedDelta to" else "Withdrawn $formattedDelta from"
+            val formattedDelta = AccountingEngine.formatMoney(effectiveAbsAmount, walletSymbol)
+            val verb = if (isAddingToGoal) "Added $formattedDelta to" else "Withdrawn $formattedDelta from"
             val walletSuffix = if (targetWallet != null) {
-                if (delta >= 0) " (deducted from ${targetWallet.name})" else " (credited to ${targetWallet.name})"
+                val wName = targetWallet.name
+                val subWalletLabel = when (fundMode.uppercase()) {
+                    "FUND_BORROW" -> "$wName-Fund (Borrowed for Personal)"
+                    "FUND_EXPENSE", "FUND_IN" -> "$wName-Fund"
+                    else -> if (uiState.value.isFundEnabled && !targetWallet.isFundWallet) "$wName-Personal" else wName
+                }
+                if (isAddingToGoal) " (deducted from $subWalletLabel)" else " (credited to $subWalletLabel)"
             } else ""
             _statusMessage.value = "$verb '${goal.name}'$walletSuffix."
             notifyWidgetsChanged()
@@ -2273,14 +2359,16 @@ class PocketViewModel(
             val isFundTransfer = transfer.note.contains("[FUND_TRANSFER]", ignoreCase = true)
             val isFundBorrow = transfer.note.contains("[FUND_BORROW]", ignoreCase = true)
             val isFundReturn = transfer.note.contains("[FUND_RETURN]", ignoreCase = true)
+            val isFundSettle = transfer.note.contains("[FUND_SETTLE]", ignoreCase = true)
+            val isFundTopup = transfer.note.contains("[FUND_TOPUP]", ignoreCase = true)
 
-            if (isFundTransfer || isFundBorrow) {
+            if (isFundTransfer || isFundBorrow || isFundSettle) {
                 val srcWallet = uiState.value.wallets.firstOrNull { it.id == transfer.sourceWalletId }
                 if (srcWallet != null && !srcWallet.hasVirtualFund) {
                     repository.saveWallet(srcWallet.withVirtualFund(enabled = true, openingFund = srcWallet.openingFundBalance))
                 }
             }
-            if (isFundTransfer || isFundReturn) {
+            if (isFundTransfer || isFundReturn || isFundTopup) {
                 val dstWallet = uiState.value.wallets.firstOrNull { it.id == transfer.destinationWalletId }
                 if (dstWallet != null && !dstWallet.hasVirtualFund) {
                     repository.saveWallet(dstWallet.withVirtualFund(enabled = true, openingFund = dstWallet.openingFundBalance))
@@ -2291,7 +2379,9 @@ class PocketViewModel(
             _statusMessage.value = when {
                 isFundTransfer -> "Transferred Fund from '$sourceWalletName' to '$destWalletName'."
                 isFundReturn -> "Returned borrowed money to '$destWalletName' Fund."
+                isFundTopup -> "Topped up '$destWalletName' Fund from '$sourceWalletName' Personal."
                 isFundBorrow -> "Personal borrow transferred from '$sourceWalletName' Fund."
+                isFundSettle -> "Transferred from '$sourceWalletName' Fund to '$destWalletName' Personal."
                 else -> "Transfer recorded."
             }
             notifyWidgetsChanged()
@@ -2310,7 +2400,9 @@ class PocketViewModel(
             return
         }
         viewModelScope.launch {
-            if (loan.note.contains("[FUND_LOAN]", ignoreCase = true) && loan.initialWalletId != null && loan.initialWalletId > 0L) {
+            val isFundLoan = loan.note.contains("[FUND_LOAN]", ignoreCase = true) ||
+                loan.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
+            if (isFundLoan && loan.initialWalletId != null && loan.initialWalletId > 0L) {
                 val targetW = uiState.value.wallets.firstOrNull { it.id == loan.initialWalletId }
                 if (targetW != null && !targetW.hasVirtualFund) {
                     repository.saveWallet(targetW.withVirtualFund(enabled = true, openingFund = targetW.openingFundBalance))
@@ -2344,7 +2436,9 @@ class PocketViewModel(
 
     fun recordLoanRepayment(loan: LoanEntity, activity: LoanActivityEntity) {
         viewModelScope.launch {
-            if (activity.note.contains("[FUND_LOAN]", ignoreCase = true) && activity.walletId != null && activity.walletId > 0L) {
+            val isFundRepayment = activity.note.contains("[FUND_LOAN]", ignoreCase = true) ||
+                activity.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
+            if (isFundRepayment && activity.walletId != null && activity.walletId > 0L) {
                 val targetW = uiState.value.wallets.firstOrNull { it.id == activity.walletId }
                 if (targetW != null && !targetW.hasVirtualFund) {
                     repository.saveWallet(targetW.withVirtualFund(enabled = true, openingFund = targetW.openingFundBalance))
@@ -2423,6 +2517,11 @@ class PocketViewModel(
                 val newOpeningFund = AccountingEngine.roundCurrency(existingWallet.openingFundBalance + diff)
                 repository.saveWallet(existingWallet.withVirtualFund(enabled = true, openingFund = newOpeningFund))
                 val newTotalActual = AccountingEngine.roundCurrency(summary.currentBalance + diff)
+                val finalFundNote = when {
+                    note.isBlank() -> "Adjusted ${existingWallet.name}-Fund sub-wallet"
+                    note.contains("-Fund", ignoreCase = true) -> note
+                    else -> "${existingWallet.name}-Fund: $note"
+                }
                 repository.createBalanceAdjustment(
                     BalanceAdjustmentEntity(
                         walletId = walletId,
@@ -2431,13 +2530,18 @@ class PocketViewModel(
                         difference = diff,
                         date = date,
                         reason = reason,
-                        note = note.ifBlank { "Adjusted ${existingWallet.name}-Fund sub-wallet" }
+                        note = finalFundNote
                     )
                 )
                 _statusMessage.value = "${existingWallet.name}-Fund balance reconciled (${if (diff >= 0) "+" else ""}$diff)."
             } else {
                 // Adjusting Personal sub-wallet adjusts total wallet balance while keeping Fund balance unchanged
                 val newTotalActual = AccountingEngine.roundCurrency(summary.currentBalance + diff)
+                val finalPersonalNote = when {
+                    note.isBlank() -> "Adjusted ${existingWallet.name}-Personal sub-wallet"
+                    note.contains("-Personal", ignoreCase = true) -> note
+                    else -> "${existingWallet.name}-Personal: $note"
+                }
                 repository.createBalanceAdjustment(
                     BalanceAdjustmentEntity(
                         walletId = walletId,
@@ -2446,7 +2550,7 @@ class PocketViewModel(
                         difference = diff,
                         date = date,
                         reason = reason,
-                        note = note.ifBlank { "Adjusted ${existingWallet.name}-Personal sub-wallet" }
+                        note = finalPersonalNote
                     )
                 )
                 _statusMessage.value = "${existingWallet.name}-Personal balance reconciled (${if (diff >= 0) "+" else ""}$diff)."

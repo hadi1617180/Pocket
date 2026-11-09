@@ -107,8 +107,23 @@ fun TransactionFormScreen(
     }
     var showTxDatePicker by remember { mutableStateOf(false) }
     var noteText by remember(existingTx) { mutableStateOf(existingTx?.note ?: "") }
-    var tagsText by remember(existingTx) { mutableStateOf(existingTx?.tags ?: "") }
+    var tagsText by remember(existingTx) {
+        mutableStateOf(
+            existingTx?.tags
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter {
+                    it.isNotBlank() &&
+                        !it.equals("FUND_BORROW", ignoreCase = true) &&
+                        !it.equals("FUND_EXPENSE", ignoreCase = true) &&
+                        !it.equals("FUND_IN", ignoreCase = true)
+                }
+                ?.joinToString(", ")
+                .orEmpty()
+        )
+    }
     var showInlineCategoryDialog by remember { mutableStateOf(false) }
+    var showQuickCategoryModal by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
     var showExpenseFundDropdown by remember { mutableStateOf(false) }
     val view = LocalView.current
@@ -196,24 +211,31 @@ fun TransactionFormScreen(
         (txFundMode == "FUND_IN" || txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW")
 
     val availableWalletBalanceForCheck = remember(selectedWalletSummary, existingTx, selectedWalletId, txFundMode, uiState.isFundEnabled) {
+        val checkingFundBucket = uiState.isFundEnabled && (txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW")
         val baseBal = when {
             selectedWalletSummary == null -> 0.0
-            uiState.isFundEnabled && (txFundMode == "FUND_EXPENSE" || txFundMode == "FUND_BORROW") ->
-                selectedWalletSummary.fundBalance
-            uiState.isFundEnabled ->
-                selectedWalletSummary.personalBalance
-            else ->
-                selectedWalletSummary.currentBalance
+            checkingFundBucket -> selectedWalletSummary.fundBalance
+            uiState.isFundEnabled -> selectedWalletSummary.personalBalance
+            else -> selectedWalletSummary.currentBalance
         }
         if (existingTx == null || existingTx.walletId != selectedWalletId) {
             baseBal
         } else {
-            val priorMainDelta = if (existingTx.type == TransactionType.EXPENSE.name) {
-                existingTx.amount
+            val existingWasFundBucket = uiState.isFundEnabled && (
+                existingTx.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
+                    existingTx.tags.contains("FUND_BORROW", ignoreCase = true) ||
+                    existingTx.tags.contains("FUND_IN", ignoreCase = true)
+                )
+            if (uiState.isFundEnabled && checkingFundBucket != existingWasFundBucket) {
+                baseBal
             } else {
-                -existingTx.amount
+                val priorMainDelta = if (existingTx.type == TransactionType.EXPENSE.name) {
+                    existingTx.amount
+                } else {
+                    -existingTx.amount
+                }
+                AccountingEngine.roundCurrency(baseBal + priorMainDelta)
             }
-            AccountingEngine.roundCurrency(baseBal + priorMainDelta)
         }
     }
     val willBecomeNegative = selectedType == TransactionType.EXPENSE &&
@@ -222,7 +244,7 @@ fun TransactionFormScreen(
 
     val pocketColors = LocalPocketColors.current
     val formBlur by animateDpAsState(
-        targetValue = if (showInlineCategoryDialog || showRideDialog) 12.dp else 0.dp,
+        targetValue = if (showInlineCategoryDialog || showQuickCategoryModal || showRideDialog || showRideDropdown) 10.dp else 0.dp,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "tx_form_blur"
     )
@@ -280,7 +302,7 @@ fun TransactionFormScreen(
             parentTransactionId = existingTx?.parentTransactionId,
             attachmentUri = existingTx?.attachmentUri ?: ""
         )
-        performPocketHaptic(view)
+        performPocketHaptic(view, hapticType = PocketHapticType.SUCCESS_MULTI_PULSE)
         viewModel.saveTransaction(
             transaction = tx,
             navigateBackOnSave = navigateBackOnSave,
@@ -297,8 +319,9 @@ fun TransactionFormScreen(
             .blur(formBlur),
         shape = RoundedCornerShape(24.dp),
         color = pocketColors.overlaySurface,
-        border = BorderStroke(1.dp, pocketColors.cardBorder)
+        border = BorderStroke(0.6.dp, pocketLiquidGlassBorderBrush())
     ) {
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -399,15 +422,53 @@ fun TransactionFormScreen(
                     }
                 }
 
-                // ii. Category (right below Date, with "New category" card at the end of the category list)
+                // ii. Category (Top 5 most-used categories inline + "More ▾" Liquid Glass sheet + "New category" chip)
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Category",
-                            style = MaterialTheme.typography.titleMedium
+                    val categoryUsageCounts = remember(uiState.transactions) {
+                        uiState.transactions.groupingBy { it.categoryId }.eachCount()
+                    }
+                    val sortedCategories = remember(filteredCategories, categoryUsageCounts, selectedCategoryId) {
+                        val byUsage = filteredCategories.sortedWith(
+                            compareByDescending<CategoryEntity> { categoryUsageCounts[it.id] ?: 0 }
+                                .thenBy { it.id }
                         )
+                        val topFive = byUsage.take(5).toMutableList()
+                        val selectedCat = filteredCategories.firstOrNull { it.id == selectedCategoryId }
+                        if (selectedCat != null && topFive.none { it.id == selectedCat.id }) {
+                            if (topFive.size >= 5) {
+                                topFive[topFive.lastIndex] = selectedCat
+                            } else {
+                                topFive.add(selectedCat)
+                            }
+                        }
+                        topFive
+                    }
+                    val hasMoreCategories = filteredCategories.size > sortedCategories.size
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Category",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            if (hasMoreCategories) {
+                                Text(
+                                    text = "All (${filteredCategories.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { showQuickCategoryModal = true }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(filteredCategories, key = { it.id }) { cat ->
+                            items(sortedCategories, key = { it.id }) { cat ->
                                 FilterChip(
                                     selected = cat.id == selectedCategoryId,
                                     onClick = { selectedCategoryId = cat.id },
@@ -423,6 +484,17 @@ fun TransactionFormScreen(
                                         .heightIn(min = 48.dp)
                                         .testTag("select_category_chip_${cat.name}")
                                 )
+                            }
+                            if (hasMoreCategories) {
+                                item(key = "more_categories_chip") {
+                                    AssistChip(
+                                        onClick = { showQuickCategoryModal = true },
+                                        label = { Text("More ▾") },
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("quick_category_more_chip")
+                                    )
+                                }
                             }
                             item(key = "new_category_card") {
                                 FilterChip(
@@ -522,7 +594,15 @@ fun TransactionFormScreen(
                                     DropdownMenu(
                                         expanded = showRideDropdown,
                                         onDismissRequest = { showRideDropdown = false },
-                                        modifier = Modifier.widthIn(min = 210.dp)
+                                        shape = RoundedCornerShape(18.dp),
+                                        containerColor = if (pocketColors.isDark) Color(0xF518181F) else Color(0xF8FFFFFF),
+                                        tonalElevation = 12.dp,
+                                        shadowElevation = 16.dp,
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (pocketColors.isDark) Color.White.copy(alpha = 0.18f) else pocketColors.cardBorder
+                                        ),
+                                        modifier = Modifier.widthIn(min = 220.dp)
                                     ) {
                                         rideModes.forEach { rideOption ->
                                             DropdownMenuItem(
@@ -753,12 +833,19 @@ fun TransactionFormScreen(
                             items(activeWallets, key = { "wallet_${it.wallet.id}" }) { summary ->
                                 val isSelected = summary.wallet.id == selectedWalletId
                                 val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                                val isCashWallet = summary.wallet.name.trim().equals("Cash", ignoreCase = true) ||
+                                    summary.wallet.type.trim().equals("CASH", ignoreCase = true)
+                                val chipDisplayBal = if (isCashWallet && uiState.isFundEnabled && !summary.wallet.isFundWallet) {
+                                    summary.personalBalance
+                                } else {
+                                    summary.currentBalance
+                                }
                                 FilterChip(
                                     selected = isSelected,
                                     onClick = { selectedWalletId = summary.wallet.id },
                                     label = {
                                         Text(
-                                            "${summary.wallet.name} (${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)})"
+                                            "${summary.wallet.name} (${AccountingEngine.formatMoney(chipDisplayBal, chipSym, includeDecimals = false)})"
                                         )
                                     },
                                     modifier = Modifier
@@ -1045,6 +1132,127 @@ fun TransactionFormScreen(
                 }
             }
         }
+        }
+    }
+
+    if (showQuickCategoryModal) {
+        var catSearchQuery by remember { mutableStateOf("") }
+        val displayedCategories = remember(filteredCategories, catSearchQuery) {
+            val q = catSearchQuery.trim()
+            if (q.isEmpty()) filteredCategories
+            else filteredCategories.filter { it.name.contains(q, ignoreCase = true) }
+        }
+        AlertDialog(
+            onDismissRequest = { showQuickCategoryModal = false },
+            containerColor = pocketColors.overlaySurface,
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (selectedType == TransactionType.INCOME) "Select Income Category" else "Select Expense Category",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                showQuickCategoryModal = false
+                                showInlineCategoryDialog = true
+                            }
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("New")
+                        }
+                        IconButton(
+                            onClick = { showQuickCategoryModal = false },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = catSearchQuery,
+                        onValueChange = { catSearchQuery = it },
+                        placeholder = { Text("Search category...") },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(displayedCategories, key = { it.id }) { cat ->
+                            val isSelected = cat.id == selectedCategoryId
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        selectedCategoryId = cat.id
+                                        showQuickCategoryModal = false
+                                    }
+                                    .testTag("modal_category_item_${cat.name}"),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else pocketColors.surfaceElevated.copy(alpha = 0.65f),
+                                border = BorderStroke(
+                                    0.6.dp,
+                                    pocketLiquidGlassBorderBrush(isHighlighted = isSelected)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        IconBadgeCircle(
+                                            iconName = cat.iconName,
+                                            colorHex = cat.colorHex,
+                                            size = 32.dp,
+                                            iconSize = 16.dp
+                                        )
+                                        Text(
+                                            text = cat.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Selected",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
     }
 
     if (showRideDialog) {
@@ -1111,7 +1319,30 @@ fun TransactionFormScreen(
         AlertDialog(
             onDismissRequest = { showInlineCategoryDialog = false },
             containerColor = pocketColors.overlaySurface,
-            title = { Text(if (targetCatType == "INCOME") "New Income Category" else "New Expense Category") },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (targetCatType == "INCOME") "New Income Category" else "New Expense Category",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { showInlineCategoryDialog = false },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
             text = {
                 OutlinedTextField(
                     value = newCatName,
@@ -1143,11 +1374,7 @@ fun TransactionFormScreen(
                     Text("Add")
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showInlineCategoryDialog = false }) {
-                    Text("Cancel")
-                }
-            }
+            dismissButton = null
         )
     }
     if (showTxDatePicker) {
@@ -1247,36 +1474,62 @@ fun TransferFormScreen(
     var sourceIsFund by remember(existingTransfer) {
         mutableStateOf(
             existingTransfer?.note?.contains("[FUND_TRANSFER]", ignoreCase = true) == true ||
-                existingTransfer?.note?.contains("[FUND_BORROW]", ignoreCase = true) == true
+                existingTransfer?.note?.contains("[FUND_BORROW]", ignoreCase = true) == true ||
+                existingTransfer?.note?.contains("[FUND_SETTLE]", ignoreCase = true) == true
         )
     }
     var destIsFund by remember(existingTransfer) {
         mutableStateOf(
             existingTransfer?.note?.contains("[FUND_TRANSFER]", ignoreCase = true) == true ||
-                existingTransfer?.note?.contains("[FUND_RETURN]", ignoreCase = true) == true
+                existingTransfer?.note?.contains("[FUND_RETURN]", ignoreCase = true) == true ||
+                existingTransfer?.note?.contains("[FUND_TOPUP]", ignoreCase = true) == true
         )
     }
-    val fundTransferMode = remember(uiState.isFundEnabled, sourceIsFund, destIsFund) {
+    var sourceFundIsBorrow by remember(existingTransfer) {
+        mutableStateOf(
+            when {
+                existingTransfer?.note?.contains("[FUND_SETTLE]", ignoreCase = true) == true -> false
+                existingTransfer?.note?.contains("[FUND_BORROW]", ignoreCase = true) == true -> true
+                else -> false
+            }
+        )
+    }
+    var destFundIsReturnDue by remember(existingTransfer, uiState.totalFundBorrowedDue) {
+        mutableStateOf(
+            when {
+                existingTransfer?.note?.contains("[FUND_TOPUP]", ignoreCase = true) == true -> false
+                existingTransfer?.note?.contains("[FUND_RETURN]", ignoreCase = true) == true -> true
+                else -> uiState.totalFundBorrowedDue > 0.005
+            }
+        )
+    }
+    val fundTransferMode = remember(uiState.isFundEnabled, sourceIsFund, destIsFund, sourceFundIsBorrow, destFundIsReturnDue) {
         if (!uiState.isFundEnabled) {
             "REGULAR"
         } else {
             when {
                 sourceIsFund && destIsFund -> "FUND_TRANSFER"
-                sourceIsFund && !destIsFund -> "BORROW"
-                !sourceIsFund && destIsFund -> "RETURN"
+                sourceIsFund && !destIsFund -> if (sourceFundIsBorrow) "BORROW" else "SETTLE"
+                !sourceIsFund && destIsFund -> if (destFundIsReturnDue) "RETURN" else "TOPUP"
                 else -> "REGULAR"
             }
         }
     }
     var noteText by remember(existingTransfer) {
-        mutableStateOf(
-            existingTransfer?.note
-                ?.replace("[FUND_TRANSFER]", "", ignoreCase = true)
-                ?.replace("[FUND_BORROW]", "", ignoreCase = true)
-                ?.replace("[FUND_RETURN]", "", ignoreCase = true)
-                ?.trim()
-                ?: ""
+        val rawCleaned = existingTransfer?.note
+            ?.replace("[FUND_TRANSFER]", "", ignoreCase = true)
+            ?.replace("[FUND_BORROW]", "", ignoreCase = true)
+            ?.replace("[FUND_SETTLE]", "", ignoreCase = true)
+            ?.replace("[FUND_RETURN]", "", ignoreCase = true)
+            ?.replace("[FUND_TOPUP]", "", ignoreCase = true)
+            ?.trim()
+            .orEmpty()
+        val isAutoGeneratedDefault = rawCleaned.matches(
+            Regex("^(Borrowed from|Official Fund out from|Returned from|Official Fund top-up from)\\s+.*-.*\\s+to\\s+.*-.*$", RegexOption.IGNORE_CASE)
+        ) || rawCleaned.matches(
+            Regex("^.*-Fund\\s*→\\s*.*-Fund$", RegexOption.IGNORE_CASE)
         )
+        mutableStateOf(if (isAutoGeneratedDefault) "" else rawCleaned)
     }
     var selectedTransferDateMillis by remember(existingTransfer) {
         mutableStateOf(existingTransfer?.date ?: System.currentTimeMillis())
@@ -1369,11 +1622,21 @@ fun TransferFormScreen(
             uiState.isFundEnabled -> sourceSummary.personalBalance
             else -> sourceSummary.currentBalance
         }
+        val existingSourceWasFund = existingTransfer != null && (
+            existingTransfer.note.contains("[FUND_TRANSFER]", ignoreCase = true) ||
+                existingTransfer.note.contains("[FUND_BORROW]", ignoreCase = true) ||
+                existingTransfer.note.contains("[FUND_SETTLE]", ignoreCase = true)
+            )
+        val existingDestWasFund = existingTransfer != null && (
+            existingTransfer.note.contains("[FUND_TRANSFER]", ignoreCase = true) ||
+                existingTransfer.note.contains("[FUND_RETURN]", ignoreCase = true) ||
+                existingTransfer.note.contains("[FUND_TOPUP]", ignoreCase = true)
+            )
         when {
             existingTransfer == null -> currentBal
-            existingTransfer.sourceWalletId == sourceWalletId ->
+            existingTransfer.sourceWalletId == sourceWalletId && (!uiState.isFundEnabled || existingSourceWasFund == sourceIsFund) ->
                 AccountingEngine.roundCurrency(currentBal + existingTransfer.principalAmount + existingTransfer.feeAmount)
-            existingTransfer.destinationWalletId == sourceWalletId -> {
+            existingTransfer.destinationWalletId == sourceWalletId && (!uiState.isFundEnabled || existingDestWasFund == sourceIsFund) -> {
                 val priorCredited = if (existingTransfer.destinationAmount > 0.0) {
                     existingTransfer.destinationAmount
                 } else {
@@ -1387,7 +1650,7 @@ fun TransferFormScreen(
     val sourceBalanceAfter = availableSourceBeforeEdit - totalSourceDebit
 
     val isSameWalletInternalFundAllowed = uiState.isFundEnabled &&
-        (fundTransferMode == "RETURN" || fundTransferMode == "BORROW")
+        (fundTransferMode == "RETURN" || fundTransferMode == "TOPUP" || fundTransferMode == "BORROW" || fundTransferMode == "SETTLE")
 
     fun handleConfirmTransfer() {
         val srcWName = sourceSummary?.wallet?.name ?: "Source"
@@ -1408,14 +1671,18 @@ fun TransferFormScreen(
             calculatedFee < 0.0 ->
                 validationError = "Transfer fee cannot be negative."
             else -> {
-                performPocketHaptic(view)
+                performPocketHaptic(view, hapticType = PocketHapticType.SUCCESS_MULTI_PULSE)
                 val finalNote = when {
                     uiState.isFundEnabled && fundTransferMode == "FUND_TRANSFER" ->
                         if (noteText.isNotBlank()) "[FUND_TRANSFER] ${noteText.trim()}" else "[FUND_TRANSFER] $srcWName-Fund → $dstWName-Fund"
                     uiState.isFundEnabled && fundTransferMode == "BORROW" ->
                         if (noteText.isNotBlank()) "[FUND_BORROW] ${noteText.trim()}" else "[FUND_BORROW] Borrowed from $srcWName-Fund to $dstWName-Personal"
+                    uiState.isFundEnabled && fundTransferMode == "SETTLE" ->
+                        if (noteText.isNotBlank()) "[FUND_SETTLE] ${noteText.trim()}" else "[FUND_SETTLE] Official Fund out from $srcWName-Fund to $dstWName-Personal"
                     uiState.isFundEnabled && fundTransferMode == "RETURN" ->
                         if (noteText.isNotBlank()) "[FUND_RETURN] ${noteText.trim()}" else "[FUND_RETURN] Returned from $srcWName-Personal to $dstWName-Fund"
+                    uiState.isFundEnabled && fundTransferMode == "TOPUP" ->
+                        if (noteText.isNotBlank()) "[FUND_TOPUP] ${noteText.trim()}" else "[FUND_TOPUP] Official Fund top-up from $srcWName-Personal to $dstWName-Fund"
                     else -> noteText.trim()
                 }
                 viewModel.saveTransfer(
@@ -1446,8 +1713,9 @@ fun TransferFormScreen(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         shape = RoundedCornerShape(24.dp),
         color = pocketColors.overlaySurface,
-        border = BorderStroke(1.dp, pocketColors.cardBorder)
+        border = BorderStroke(0.6.dp, pocketLiquidGlassBorderBrush())
     ) {
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -1529,6 +1797,13 @@ fun TransferFormScreen(
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(wallets, key = { it.wallet.id }) { summary ->
                                 val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                                val isCashWallet = summary.wallet.name.trim().equals("Cash", ignoreCase = true) ||
+                                    summary.wallet.type.trim().equals("CASH", ignoreCase = true)
+                                val chipDisplayBal = if (isCashWallet && uiState.isFundEnabled && !summary.wallet.isFundWallet) {
+                                    summary.personalBalance
+                                } else {
+                                    summary.currentBalance
+                                }
                                 FilterChip(
                                     selected = summary.wallet.id == sourceWalletId,
                                     onClick = {
@@ -1538,7 +1813,7 @@ fun TransferFormScreen(
                                         }
                                     },
                                     label = {
-                                        Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)}")
+                                        Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(chipDisplayBal, chipSym, includeDecimals = false)}")
                                     },
                                     modifier = Modifier
                                         .heightIn(min = 48.dp)
@@ -1591,6 +1866,13 @@ fun TransferFormScreen(
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(wallets, key = { it.wallet.id }) { summary ->
                                 val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                                val isCashWallet = summary.wallet.name.trim().equals("Cash", ignoreCase = true) ||
+                                    summary.wallet.type.trim().equals("CASH", ignoreCase = true)
+                                val chipDisplayBal = if (isCashWallet && uiState.isFundEnabled && !summary.wallet.isFundWallet) {
+                                    summary.personalBalance
+                                } else {
+                                    summary.currentBalance
+                                }
                                 FilterChip(
                                     selected = summary.wallet.id == destWalletId,
                                     onClick = {
@@ -1600,7 +1882,7 @@ fun TransferFormScreen(
                                         }
                                     },
                                     label = {
-                                        Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)}")
+                                        Text("${summary.wallet.name} · ${AccountingEngine.formatMoney(chipDisplayBal, chipSym, includeDecimals = false)}")
                                     },
                                     modifier = Modifier
                                         .heightIn(min = 48.dp)
@@ -1622,17 +1904,161 @@ fun TransferFormScreen(
                                 hideBalances = uiState.settings.hideBalancesPrivacy
                             )
 
-                            val srcSubLabel = "${sourceSummary?.wallet?.name ?: "Source"}-${if (sourceIsFund) "Fund" else "Personal"}"
-                            val dstSubLabel = "${destSummary.wallet.name}-${if (destIsFund) "Fund" else "Personal"}"
+                            val srcWName = sourceSummary?.wallet?.name ?: "Source"
+                            val dstWName = destSummary.wallet.name
+                            val srcSubLabel = "$srcWName-${if (sourceIsFund) "Fund" else "Personal"}"
+                            val dstSubLabel = "$dstWName-${if (destIsFund) "Fund" else "Personal"}"
+
+                            // 2-Card Fund Transfer Type Selector whenever Source or Destination has <Wallet>-Fund selected
+                            AnimatedVisibility(visible = sourceIsFund || destIsFund) {
+                                val selectorHeader = when {
+                                    sourceIsFund && !destIsFund -> "$srcWName-Fund Transfer Type"
+                                    !sourceIsFund && destIsFund -> "$dstWName-Fund Transfer Type"
+                                    else -> "$srcWName-Fund → $dstWName-Fund Transfer Type"
+                                }
+                                val isOfficialSelected = when {
+                                    sourceIsFund && !destIsFund -> !sourceFundIsBorrow
+                                    !sourceIsFund && destIsFund -> !destFundIsReturnDue
+                                    else -> true
+                                }
+                                val isSecondOptionSelected = !isOfficialSelected
+                                val officialTitle = when {
+                                    sourceIsFund && !destIsFund -> "Official Fund"
+                                    !sourceIsFund && destIsFund -> "Official Fund Top-up"
+                                    else -> "Official Fund Transfer"
+                                }
+                                val officialSubtitle = when {
+                                    sourceIsFund && !destIsFund -> "No return needed (No Due)"
+                                    !sourceIsFund && destIsFund -> "Adds to $dstWName-Fund"
+                                    else -> "Keeps in $dstWName-Fund"
+                                }
+                                val secondTitle = when {
+                                    !sourceIsFund && destIsFund -> "Return Borrowed Due"
+                                    else -> "Borrow for Personal"
+                                }
+                                val secondSubtitle = when {
+                                    sourceIsFund && !destIsFund -> "Adds to Borrowed Due"
+                                    !sourceIsFund && destIsFund -> "Reduces Borrowed Due"
+                                    else -> "To $dstWName-Personal (Adds Due)"
+                                }
+                                val secondActiveColor = if (!sourceIsFund && destIsFund) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    pocketColors.expenseText
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = pocketColors.surfaceElevated,
+                                    border = BorderStroke(1.dp, pocketColors.cardBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = selectorHeader,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Surface(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable {
+                                                        when {
+                                                            sourceIsFund && !destIsFund -> sourceFundIsBorrow = false
+                                                            !sourceIsFund && destIsFund -> destFundIsReturnDue = false
+                                                        }
+                                                    }
+                                                    .testTag("transfer_fund_official_chip"),
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (isOfficialSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (isOfficialSelected) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
+                                                )
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = officialTitle,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isOfficialSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = officialSubtitle,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable {
+                                                        when {
+                                                            sourceIsFund && !destIsFund -> sourceFundIsBorrow = true
+                                                            !sourceIsFund && destIsFund -> destFundIsReturnDue = true
+                                                            sourceIsFund && destIsFund -> {
+                                                                destIsFund = false
+                                                                sourceFundIsBorrow = true
+                                                            }
+                                                        }
+                                                    }
+                                                    .testTag("transfer_fund_borrow_or_return_chip"),
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (isSecondOptionSelected) secondActiveColor.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface,
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (isSecondOptionSelected) secondActiveColor else pocketColors.cardBorder
+                                                )
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = secondTitle,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isSecondOptionSelected) secondActiveColor else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = secondSubtitle,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = if (isSecondOptionSelected) secondActiveColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             val modeDescription = when (fundTransferMode) {
-                                "FUND_TRANSFER" -> "$srcSubLabel → $dstSubLabel • Fund Transfer"
-                                "BORROW" -> "$srcSubLabel → $dstSubLabel • Borrow from Fund (Adds to Due)"
+                                "FUND_TRANSFER" -> "$srcSubLabel → $dstSubLabel • Official Fund Transfer"
+                                "BORROW" -> "$srcSubLabel → $dstSubLabel • Borrow for Personal (Adds to Due)"
+                                "SETTLE" -> "$srcSubLabel → $dstSubLabel • Official Fund (No Return Needed)"
                                 "RETURN" -> "$srcSubLabel → $dstSubLabel • Return to Fund (Reduces Due)"
+                                "TOPUP" -> "$srcSubLabel → $dstSubLabel • Official Fund Top-up (No Due Change)"
                                 else -> "$srcSubLabel → $dstSubLabel • Personal Transfer"
                             }
                             val modeColor = when (fundTransferMode) {
                                 "BORROW" -> pocketColors.expenseText
-                                "RETURN", "FUND_TRANSFER" -> MaterialTheme.colorScheme.primary
+                                "RETURN", "FUND_TRANSFER", "SETTLE", "TOPUP" -> MaterialTheme.colorScheme.primary
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             }
                             Surface(
@@ -1871,6 +2297,7 @@ fun TransferFormScreen(
                 }
             }
         }
+        }
     }
 
     if (showTransferDatePicker) {
@@ -1935,7 +2362,7 @@ private enum class HistoryDateRange(val label: String) {
     CUSTOM("Custom Range")
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun TransactionHistoryScreen(
     uiState: PocketUiState,
@@ -1988,8 +2415,9 @@ fun TransactionHistoryScreen(
         }
     }
     val pocketColors = LocalPocketColors.current
+    var showPeriodDropdown by remember { mutableStateOf(false) }
     val historyBlur by animateDpAsState(
-        targetValue = if (selectedEntryForModal != null || showBulkCategoryDialog) 14.dp else 0.dp,
+        targetValue = if (selectedEntryForModal != null || showBulkCategoryDialog || showPeriodDropdown) 12.dp else 0.dp,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "history_blur"
     )
@@ -1999,7 +2427,13 @@ fun TransactionHistoryScreen(
             .asSequence()
             .flatMap { it.tags.split(",") }
             .map { it.trim().removePrefix("#") }
-            .filter { it.isNotBlank() && !it.equals("recurring", ignoreCase = true) }
+            .filter {
+                it.isNotBlank() &&
+                    !it.equals("recurring", ignoreCase = true) &&
+                    !it.equals("FUND_BORROW", ignoreCase = true) &&
+                    !it.equals("FUND_EXPENSE", ignoreCase = true) &&
+                    !it.equals("FUND_IN", ignoreCase = true)
+            }
             .distinct()
             .toList()
     }
@@ -2067,11 +2501,17 @@ fun TransactionHistoryScreen(
                 e.note.contains("[FUND_TRANSFER]", ignoreCase = true) ||
                 e.note.contains("[FUND_BORROW]", ignoreCase = true) ||
                 e.note.contains("[FUND_RETURN]", ignoreCase = true) ||
+                e.note.contains("[FUND_SETTLE]", ignoreCase = true) ||
+                e.note.contains("[FUND_TOPUP]", ignoreCase = true) ||
                 e.note.contains("[FUND_LOAN]", ignoreCase = true) ||
+                e.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true) ||
                 e.note.contains("-Fund", ignoreCase = true)
             val isBorrowRelated = e.tags.contains("FUND_BORROW", ignoreCase = true) ||
                 e.note.contains("[FUND_BORROW]", ignoreCase = true) ||
-                e.note.contains("[FUND_RETURN]", ignoreCase = true)
+                e.note.contains("[FUND_RETURN]", ignoreCase = true) ||
+                e.note.contains("[FUND_SETTLE]", ignoreCase = true) ||
+                e.note.contains("[FUND_TOPUP]", ignoreCase = true) ||
+                e.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
             val inSubWallet = when (subWalletHistoryFilter) {
                 "FUND" -> isFundRelated
                 "PERSONAL" -> !isFundRelated || isBorrowRelated
@@ -2263,7 +2703,6 @@ fun TransactionHistoryScreen(
                     }
                     SimpleDateFormat("MMM yyyy", Locale.ENGLISH).format(cal.time)
                 }
-                var showPeriodDropdown by remember { mutableStateOf(false) }
                 val activePeriodText = if (dateRange == HistoryDateRange.THIS_MONTH) monthNameLabel else dateRange.label
 
                 LazyRow(
@@ -2300,7 +2739,11 @@ fun TransactionHistoryScreen(
                             )
                             DropdownMenu(
                                 expanded = showPeriodDropdown,
-                                onDismissRequest = { showPeriodDropdown = false }
+                                onDismissRequest = { showPeriodDropdown = false },
+                                shape = RoundedCornerShape(16.dp),
+                                containerColor = if (pocketColors.isDark) Color(0xF21C1C22) else Color(0xF6FFFFFF),
+                                shadowElevation = 14.dp,
+                                border = BorderStroke(0.6.dp, pocketLiquidGlassBorderBrush())
                             ) {
                                 HistoryDateRange.entries.forEach { range ->
                                     val labelText = if (range == HistoryDateRange.THIS_MONTH) monthNameLabel else range.label
@@ -2538,7 +2981,7 @@ fun TransactionHistoryScreen(
                 }
             } else {
                 groupedByDay.forEach { (dayLabel, dayEntries) ->
-                    item(key = "header_$dayLabel") {
+                    stickyHeader(key = "header_$dayLabel") {
                         val dayNet = dayEntries
                             .filter { it.kind == LedgerEntryKind.INCOME || it.kind == LedgerEntryKind.EXPENSE || it.kind == LedgerEntryKind.EXPENSE_REVERSAL }
                             .sumOf { it.signedAmount }
@@ -2548,23 +2991,34 @@ fun TransactionHistoryScreen(
                         } else {
                             symbol
                         }
-                        Row(
+                        Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 6.dp, bottom = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.80f),
+                            border = BorderStroke(0.6.dp, pocketLiquidGlassBorderBrush(isHighlighted = true))
                         ) {
-                            Text(
-                                text = dayLabel,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "Daily net: ${AccountingEngine.formatMoney(dayNet, daySymbol, showSign = true, includeDecimals = false)}",
-                                style = TabularMoneySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = dayLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Net: ${AccountingEngine.formatMoney(dayNet, daySymbol, showSign = true, includeDecimals = false)}",
+                                    style = TabularMoneySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White.copy(alpha = 0.95f)
+                                )
+                            }
                         }
                     }
                     items(dayEntries, key = { it.uniqueKey }) { entry ->

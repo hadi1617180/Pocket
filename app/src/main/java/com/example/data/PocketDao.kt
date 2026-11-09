@@ -84,10 +84,10 @@ interface PocketDao {
     @Query("UPDATE app_settings SET defaultWalletId = :toWalletId WHERE defaultWalletId = :fromWalletId")
     suspend fun reassignSettingsDefaultWallet(fromWalletId: Long, toWalletId: Long)
 
-    @Query("DELETE FROM transactions WHERE transferId IN (SELECT id FROM transfers WHERE sourceWalletId = destinationWalletId AND note NOT LIKE '%[FUND_BORROW]%' AND note NOT LIKE '%[FUND_RETURN]%' AND note NOT LIKE '%[FUND_TRANSFER]%')")
+    @Query("DELETE FROM transactions WHERE transferId IN (SELECT id FROM transfers WHERE sourceWalletId = destinationWalletId AND note NOT LIKE '%[FUND_BORROW]%' AND note NOT LIKE '%[FUND_RETURN]%' AND note NOT LIKE '%[FUND_TRANSFER]%' AND note NOT LIKE '%[FUND_SETTLE]%' AND note NOT LIKE '%[FUND_TOPUP]%')")
     suspend fun deleteSelfTransferFeesAfterMigration()
 
-    @Query("DELETE FROM transfers WHERE sourceWalletId = destinationWalletId AND note NOT LIKE '%[FUND_BORROW]%' AND note NOT LIKE '%[FUND_RETURN]%' AND note NOT LIKE '%[FUND_TRANSFER]%'")
+    @Query("DELETE FROM transfers WHERE sourceWalletId = destinationWalletId AND note NOT LIKE '%[FUND_BORROW]%' AND note NOT LIKE '%[FUND_RETURN]%' AND note NOT LIKE '%[FUND_TRANSFER]%' AND note NOT LIKE '%[FUND_SETTLE]%' AND note NOT LIKE '%[FUND_TOPUP]%'")
     suspend fun deleteSelfTransfersAfterMigration()
 
     // --- Categories ---
@@ -194,11 +194,14 @@ interface PocketDao {
         }
         if (transfer.feeAmount > 0.0) {
             val isFundBorrowSource = transfer.note.contains("[FUND_BORROW]", ignoreCase = true)
-            val isFundTransferSource = transfer.note.contains("[FUND_TRANSFER]", ignoreCase = true)
+            val isFundTransferSource = transfer.note.contains("[FUND_TRANSFER]", ignoreCase = true) ||
+                transfer.note.contains("[FUND_SETTLE]", ignoreCase = true)
             val cleanNote = transfer.note
                 .replace("[FUND_TRANSFER]", "", ignoreCase = true)
                 .replace("[FUND_BORROW]", "", ignoreCase = true)
+                .replace("[FUND_SETTLE]", "", ignoreCase = true)
                 .replace("[FUND_RETURN]", "", ignoreCase = true)
+                .replace("[FUND_TOPUP]", "", ignoreCase = true)
                 .trim()
             val feeNote = if (cleanNote.isNotBlank()) {
                 "Transfer fee ($sourceWalletName → $destWalletName): $cleanNote"
@@ -277,11 +280,17 @@ interface PocketDao {
     suspend fun createLoanAtomically(loan: LoanEntity): Long {
         val loanId = insertLoan(loan)
         if (loan.initialWalletId != null && loan.initialWalletId > 0L) {
+            val isFundLoanBorrow = loan.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
             val isFundLoan = loan.note.contains("[FUND_LOAN]", ignoreCase = true)
             val baseNote = if (loan.direction == LoanDirection.LENT.name) {
                 "Initial loan lent to ${loan.personName}"
             } else {
                 "Initial loan borrowed from ${loan.personName}"
+            }
+            val actNote = when {
+                isFundLoanBorrow -> "[FUND_LOAN_BORROW] $baseNote"
+                isFundLoan -> "[FUND_LOAN] $baseNote"
+                else -> baseNote
             }
             insertLoanActivity(
                 LoanActivityEntity(
@@ -291,7 +300,7 @@ interface PocketDao {
                     interestPortion = 0.0,
                     walletId = loan.initialWalletId,
                     date = loan.startDate,
-                    note = if (isFundLoan) "[FUND_LOAN] $baseNote" else baseNote
+                    note = actNote
                 )
             )
         }
@@ -312,9 +321,11 @@ interface PocketDao {
         }
         if (activity.interestPortion > 0.0 && activity.walletId != null && activity.walletId > 0L) {
             val isLent = loan.direction == LoanDirection.LENT.name
+            val isFundBorrowActivity = activity.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
             val isFundActivity = activity.note.contains("[FUND_LOAN]", ignoreCase = true)
             val interestTags = when {
-                isFundActivity && isLent -> "loan-interest, FUND_IN"
+                isFundBorrowActivity && !isLent -> "loan-interest, FUND_BORROW"
+                (isFundActivity || isFundBorrowActivity) && isLent -> "loan-interest, FUND_IN"
                 isFundActivity && !isLent -> "loan-interest, FUND_EXPENSE"
                 else -> "loan-interest"
             }

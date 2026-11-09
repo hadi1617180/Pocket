@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Fingerprint
@@ -1112,7 +1114,31 @@ fun LedgerEntryActionDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = LocalPocketColors.current.overlaySurface,
-        title = { Text(entry.title) },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = entry.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .testTag("ledger_entry_dialog_close_x")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -1192,45 +1218,68 @@ fun LedgerEntryActionDialog(
         },
         confirmButton = {
             if (confirmDelete) {
-                Button(
-                    onClick = onDelete,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.testTag("confirm_delete_entry_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Confirm Delete")
-                }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (onDuplicate != null) {
-                        OutlinedButton(onClick = onDuplicate) {
-                            Text("Duplicate")
-                        }
+                    IconButton(
+                        onClick = { confirmDelete = false },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("cancel_delete_entry_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Button(
-                        onClick = onEdit,
-                        modifier = Modifier.testTag("edit_entry_button")
+                        onClick = onDelete,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.testTag("confirm_delete_entry_button")
                     ) {
-                        Text("Edit")
+                        Text("Confirm Delete")
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Left bottom: Edit icon button
+                    IconButton(
+                        onClick = onEdit,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("edit_entry_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit entry",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    // Right bottom: Delete icon button in accent color
+                    IconButton(
+                        onClick = { confirmDelete = true },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("delete_entry_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete entry",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
         },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!confirmDelete) {
-                    TextButton(
-                        onClick = { confirmDelete = true },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.testTag("delete_entry_button")
-                    ) {
-                        Text("Delete")
-                    }
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("Close")
-                }
-            }
-        }
+        dismissButton = null
     )
 
     if (showFullPhoto && attachmentBitmap != null) {

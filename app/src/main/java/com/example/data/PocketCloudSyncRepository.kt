@@ -94,6 +94,7 @@ data class UserProfileDoc(
     val subscriptionTier: String = "FREE",
     val subscriptionExpiresAt: Long? = null,
     val activationCode: String = "",
+    val fundFeatureEnabled: Boolean = false,
     val hasCompletedOnboarding: Boolean = true,
     val syncVersion: Long = 1L,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -176,6 +177,7 @@ class PocketCloudSyncRepository(
                 "subscriptionTier" to (if (profile.subscriptionTier in listOf("FREE", "TRIAL_3_DAYS", "LIFETIME")) profile.subscriptionTier else "FREE"),
                 "subscriptionExpiresAt" to profile.subscriptionExpiresAt,
                 "activationCode" to profile.activationCode.take(100),
+                "fundFeatureEnabled" to profile.fundFeatureEnabled,
                 "hasCompletedOnboarding" to profile.hasCompletedOnboarding,
                 "syncVersion" to profile.syncVersion.coerceAtLeast(0L),
                 "createdAt" to createdAtValue,
@@ -411,6 +413,7 @@ class PocketCloudSyncRepository(
                 subscriptionTier = settings.subscriptionTier,
                 subscriptionExpiresAt = settings.subscriptionExpiresAt,
                 activationCode = settings.activationCode,
+                fundFeatureEnabled = settings.fundFeatureEnabled,
                 hasCompletedOnboarding = settings.hasCompletedOnboarding,
                 syncVersion = syncVersion
             )
@@ -540,7 +543,10 @@ class PocketCloudSyncRepository(
                 subscriptionTier = if (useLocalSubscription) localTier else remoteTier,
                 subscriptionExpiresAt = if (useLocalSubscription) localSettingsFallback.subscriptionExpiresAt else profile.subscriptionExpiresAt,
                 activationCode = if (useLocalSubscription) localSettingsFallback.activationCode else profile.activationCode,
-                appLanguage = profile.appLanguage.ifBlank { localSettingsFallback.appLanguage.ifBlank { "EN" } }
+                appLanguage = profile.appLanguage.ifBlank { localSettingsFallback.appLanguage.ifBlank { "EN" } },
+                fundFeatureEnabled = profile.fundFeatureEnabled ||
+                    localSettingsFallback.fundFeatureEnabled ||
+                    wallets.any { it.isFundWallet || it.hasVirtualFund }
             )
 
             CloudAccountSnapshot(
@@ -815,6 +821,7 @@ class PocketCloudSyncRepository(
         subscriptionTier = doc.getString("subscriptionTier") ?: "FREE",
         subscriptionExpiresAt = doc.getLong("subscriptionExpiresAt"),
         activationCode = doc.getString("activationCode") ?: "",
+        fundFeatureEnabled = doc.getBoolean("fundFeatureEnabled") ?: false,
         hasCompletedOnboarding = doc.getBoolean("hasCompletedOnboarding") ?: true,
         syncVersion = doc.getLong("syncVersion") ?: 1L,
         createdAt = doc.getTimestamp("createdAt"),

@@ -61,7 +61,7 @@ service cloud.firestore {
           'loanDeadlineNotificationEnabled', 'dailyExpenseReminderEnabled',
           'dailyReminderHour', 'dailyReminderMinute', 'backgroundOpacity',
           'accentColorHex', 'boxColorHex', 'boxOpacity', 'appLanguage', 'dateFormatPattern',
-          'masterMonthlyBudget', 'hideBalancesPrivacy',
+          'masterMonthlyBudget', 'hideBalancesPrivacy', 'fundFeatureEnabled',
           'hasCompletedOnboarding', 'syncVersion', 'subscriptionTier',
           'subscriptionExpiresAt', 'activationCode', 'createdAt', 'updatedAt'
         ])
@@ -86,6 +86,7 @@ service cloud.firestore {
         && isOptionalString(data, 'dateFormatPattern', 40)
         && isOptionalNumber(data, 'masterMonthlyBudget', 0, 1000000000000)
         && isOptionalBool(data, 'hideBalancesPrivacy')
+        && isOptionalBool(data, 'fundFeatureEnabled')
         && isOptionalString(data, 'subscriptionTier', 40)
         && isOptionalInt(data, 'subscriptionExpiresAt', 0, 9007199254740991)
         && isOptionalString(data, 'activationCode', 50)
@@ -339,7 +340,7 @@ service cloud.firestore {
           'loanDeadlineNotificationEnabled', 'dailyExpenseReminderEnabled',
           'dailyReminderHour', 'dailyReminderMinute', 'backgroundOpacity',
           'accentColorHex', 'boxColorHex', 'boxOpacity', 'appLanguage', 'dateFormatPattern',
-          'masterMonthlyBudget', 'hideBalancesPrivacy',
+          'masterMonthlyBudget', 'hideBalancesPrivacy', 'fundFeatureEnabled',
           'hasCompletedOnboarding', 'syncVersion', 'subscriptionTier',
           'subscriptionExpiresAt', 'activationCode', 'updatedAt'
         ]);

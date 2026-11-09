@@ -1,38 +1,105 @@
-# Deep Audit Bug Fixes & Minimalistic UI Polish Plan
+# Savings Goal Sub-Wallet Support, Cash Wallet Display Rule & Systemic Bug Fixes
 
-## 1. Accounting & Data-Layer Loopholes Found (To Be Fixed)
+This update brings full `<Wallet>-Personal`, `<Wallet>-Fund`, and `Borrow for Personal` support to Savings Goals (enabled by default), updates the **Cash** wallet card on the Wallets home screen to display **Cash Personal** as its main headline amount with `Cash-Total`, `Cash-Fund`, and `Borrowed Due` in the subtitle, and resolves remaining sub-wallet and validation loopholes across the app.
 
-### A. Monthly Reports & Home Summary Mixing Fund with Personal (`AccountingEngine.kt` & `ReportsAndStatementScreens.kt`)
-- **Issue**: Currently, `calculateMonthlyReport` includes `FUND_IN` (official Fund deposits) and `FUND_EXPENSE` (official Fund expenses) inside the user's Personal Monthly Income, Expense, Net Cashflow, and Monthly Budget progress.
-- **Fix**:
-  - Default the Home Hero Card's monthly Income/Expense pills and the Personal Monthly Budget tracker to **Personal-only** (`PERSONAL` income/expenses + `FUND_BORROW` expenses, which are personal expenses paid by borrowing from Fund).
-  - Add a clean 3-chip filter toggle (`Personal` • `Fund` • `Combined`) at the top of the **Reports** screen so the user can inspect Personal cashflow, Official Fund cashflow (`FUND_IN` vs `FUND_EXPENSE`), or Combined totals independently.
+## User Review & Critical Decisions
 
-### B. Wallet Migration Deleting Same-Wallet Sub-Wallet Transfers (`PocketDao.kt`)
-- **Issue**: `deleteSelfTransfersAfterMigration()` deletes all transfers where `sourceWalletId == destinationWalletId` across the database. Because `<Wallet>-Personal ↔ <Wallet>-Fund` transfers (`[FUND_BORROW]` / `[FUND_RETURN]`) legitimately share the same `walletId`, migrating any wallet would accidentally delete internal sub-wallet transfers.
-- **Fix**: Exclude `[FUND_BORROW]`, `[FUND_RETURN]`, and `[FUND_TRANSFER]` notes from `deleteSelfTransfersAfterMigration()` and `deleteSelfTransferFeesAfterMigration()`.
+> [!IMPORTANT]
+> Both design preferences were confirmed during clarification and are incorporated into this plan:
 
-### C. Service Fees & Transfer Fees Sub-Wallet Tag Propagation (`PocketRepository.kt` & `PocketDao.kt`)
-- **Issue**:
-  1. In `saveTransactionWithOptionalFee`, editing an existing transaction with a child service fee did not update `tags` on the child fee transaction, and an `INCOME` with `FUND_IN` that had a fee created an `EXPENSE` child with `FUND_IN` instead of `FUND_EXPENSE`.
-  2. In `saveTransferAtomically`, a transfer with `[FUND_BORROW]` that included a fee tagged the fee as `FUND_EXPENSE` instead of `FUND_BORROW`.
-- **Fix**: Properly map child fee tags (`FUND_EXPENSE` for official Fund transactions/transfers, `FUND_BORROW` for borrowed-from-Fund transactions/transfers) on both insert and update.
-
-### D. Cross-Wallet Fund Borrow & Return Reconciliation (`AccountingEngine.kt` & `PocketUiState`)
-- **Issue**: If a user borrows from `MTB-Fund` (`৳500`) and later repays that borrowed amount into `Bkash-Fund` (`[FUND_RETURN] ৳500`), the global `totalFundBorrowedDue` becomes `৳0`, but `MTB`'s individual `fundBorrowedDue` still showed `৳500` because the return happened in `Bkash`. Also, `totalFundBalance` summed across wallets without checking currency (`BDT`).
-- **Fix**: Filter global Fund totals to primary currency (`BDT`) and reconcile individual wallet `fundBorrowedDue` against global excess returns so paid-off borrows never leave stale warnings on individual cards.
-
-### E. `CombinedFundDetailScreen` & `WalletDetailScreen` Sub-Wallet Completeness (`WalletsAndAdjustmentScreens.kt`)
-- **Issue**:
-  1. `CombinedFundDetailScreen` missed `[FUND_LOAN]` entries in its filter and didn't support editing `LOAN_PRINCIPAL` or transfer-fee rows directly.
-  2. In `WalletDetailScreen`, switching to `<Wallet>-Personal` or `<Wallet>-Fund` still showed the combined wallet formula breakdown at the top instead of the selected sub-wallet's breakdown, and hid the running balance on sub-wallet tabs.
-- **Fix**:
-  - Include `[FUND_LOAN]` entries in `CombinedFundDetailScreen` and support full edit actions for transfers and loans.
-  - Show sub-wallet-specific formula breakdown and accurate sub-wallet running balances when viewing `<Wallet>-Personal` or `<Wallet>-Fund` tabs.
+- **Confirmed Decision 1 (Savings Goal Wallet & Sub-Wallet Selector)**: When adding to or withdrawing from a Savings Goal, the **Transfer from/to Wallet** option is **enabled by default**, immediately showing the wallet chips alongside the `<Wallet>-Personal` and `<Wallet>-Fund` sub-wallet selector cards (plus `Official Fund Expense` vs `Borrow for Personal` when depositing from Fund).
+- **Confirmed Decision 2 (Cash Wallet Display Rule)**: On the Wallets home screen, the **Cash** wallet displays **Cash Personal** (`personalBalance`) as its main big amount on the right, and—when Cash has an active Fund balance or Borrowed Due—displays `Cash-Total`, `Cash-Fund`, and `Borrowed Due` in its 2-column subtitle. All other wallets continue to show Total as the main big amount and `<Wallet>-Personal`, `<Wallet>-Fund`, and `Borrowed Due` in the subtitle.
 
 ---
 
-## 2. Minimalistic UI Enhancements Included
-- **Collapsible Formula Breakdown in Wallet Detail**: Keep the top balance card clean by making the multi-line formula breakdown expandable/collapsible with a single tap so the transaction list is immediately visible without scrolling.
-- **Sub-Wallet Filter Chips in Transaction History**: Add quick `All` / `Personal` / `Fund` filter chips in the History screen so users can filter personal vs fund entries anytime.
-- **Clean Single-Line Borrowed-from-Fund Banner**: Streamline the Borrowed-from-Fund indicator on the Wallets screen into a compact single-line pill with a quick `Repay` action.
+## 1. Overview & Core Concept
+
+- **What It Does**:
+  1. Upgrades the **Savings Goal Add / Withdraw Dialog** so users can seamlessly fund goals from (or withdraw into) `<Wallet>-Personal` or `<Wallet>-Fund`, including borrowing from Fund (`FUND_BORROW`) or spending Official Fund (`FUND_EXPENSE`).
+  2. Customizes the **Cash** wallet card on the Wallets home screen so its main headline figure reflects spendable **Cash Personal**, while `Cash-Total`, `Cash-Fund`, and `Borrowed Due` appear in the tabular subtitle whenever Cash has an active Fund or Borrowed Due balance.
+  3. Closes remaining sub-wallet and accounting loopholes in Savings Goal withdrawals, Recurring Bill payments, and Balance Reconciliation.
+- **Target Audience / Persona**: Pocket users managing personal cash alongside official/project funds and savings targets.
+- **Key Value**: Consistent sub-wallet awareness across every money movement dialog and immediate visibility of spendable personal cash on the home screen.
+
+---
+
+## 2. User Experience & Visual Design
+
+- **Key User Flows**:
+  1. **Adding / Withdrawing Money in Savings Goals**:
+     - Tapping **+ Add** or **− Withdraw** on any Savings Goal opens the Liquid Glass dialog with **Transfer from/to Wallet** switched **ON by default**.
+     - Users pick a wallet chip (showing each wallet's live balance) and immediately see the 2-column `<Wallet>-Personal` and `<Wallet>-Fund` selector cards.
+     - When adding to a goal (`+ Add`) with `<Wallet>-Fund` selected, users can choose between **Official Fund Expense** (deducts from `<Wallet>-Fund`) and **Borrow for Personal** (deducts from `<Wallet>-Fund` and adds to `Borrowed Due`).
+     - When withdrawing from a goal (`− Withdraw`), the dialog validates that the withdrawal amount does not exceed the goal's currently saved balance (`savedAmount`).
+  2. **Cash Wallet Card on Wallets Home Screen**:
+     - When the Fund feature is active, the **Cash** wallet card shows `Cash Personal` as its primary large right-aligned amount.
+     - When Cash has an active Fund balance or Borrowed Due, the 2-column subtitle under Cash displays:
+       - `Cash-Total` → Total Cash balance (`currentBalance`)
+       - `Cash-Fund` → Fund Cash balance (`fundBalance`)
+       - `Borrowed Due` → Outstanding borrowed due (when `> 0`)
+     - All other wallets (`Bkash`, `Nagad`, `Bank`, etc.) keep their existing layout: Total balance as the main big amount, and `<Wallet>-Personal`, `<Wallet>-Fund`, and `Borrowed Due` in the subtitle.
+- **Visual Identity & Theme**:
+  - Preserves the iOS 27 Liquid Glass aesthetic, specular borders, tabular numerals (`tnum`), and dynamic accent coloring.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Enabling Sub-Wallet Selection Across All Remaining Financial Dialogs**
+  - *Chosen Approach*: Bring the same `SubWalletSelectorCards` (`<Wallet>-Personal` / `<Wallet>-Fund` + `Official Fund` / `Borrow for Personal`) to **Savings Goal Add/Withdraw**, **Recurring Bill Pay Confirmation**, and **Reconcile Balance**.
+  - *Why*: Previously, paying a recurring bill or funding a savings goal only allowed selecting the parent wallet, forcing all recurring payments and savings deposits into Personal even when paid from Fund.
+- **Decision 2: Preventing Over-Withdrawal Loophole on Savings Goals**
+  - *Chosen Approach*: Cap and validate Savings Goal withdrawals so a user cannot withdraw more than `goal.savedAmount` and accidentally mint extra wallet income.
+  - *Why*: Previously, withdrawing ৳1,000 from a goal that only had ৳500 saved clamped the goal to ৳0 but still credited ৳1,000 of income to the destination wallet.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         Wallets Home Screen                              │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │ Wallet Card Renderer                                               │  │
+│  │  • If wallet == "Cash" & Fund Enabled:                             │  │
+│  │      Main Big Amount  ──► summary.personalBalance                  │  │
+│  │      Subtitle Rows    ──► Cash-Total | Cash-Fund | Borrowed Due    │  │
+│  │  • All Other Wallets:                                              │  │
+│  │      Main Big Amount  ──► summary.currentBalance (Total)           │  │
+│  │      Subtitle Rows    ──► <W>-Personal | <W>-Fund | Borrowed Due   │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                 Savings Goal & Recurring Bill Dialogs                    │
+│  ┌──────────────────────────────┐    ┌────────────────────────────────┐  │
+│  │ SavingsGoalFundDialog        │    │ RecurringPayConfirmDialog      │  │
+│  │ • transferFromOrToWallet=true│    │ • SubWalletSelectorCards       │  │
+│  │ • SubWalletSelectorCards     │    │ • Official Fund vs Borrow      │  │
+│  │ • Official Fund vs Borrow    │    │ • Balance warning per bucket   │  │
+│  │ • Over-withdrawal guard      │    └────────────────────────────────┘  │
+│  └──────────────┬───────────────┘                     │                  │
+└─────────────────┼─────────────────────────────────────┼──────────────────┘
+                  ▼                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    PocketViewModel & AccountingEngine                    │
+│  • Auto-enables virtual fund (`withVirtualFund(enabled = true)`) when    │
+│    a Fund or Borrow tag (`FUND_EXPENSE`, `FUND_BORROW`, `FUND_IN`) is    │
+│    used in Savings Goals or Recurring Bill payments.                     │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Interactive Component & State Mapping**:
+  - `SavingsGoalFundDialog`:
+    - Defaults `transferFromOrToWallet = true` and selects the user's default/first active wallet.
+    - Integrates `SubWalletSelectorCards` and `Official Fund Expense` / `Borrow for Personal` chips when `uiState.isFundEnabled` is true.
+    - Displays a negative-balance warning banner if deducting from the chosen sub-wallet (`Personal` or `Fund`) will make that sub-wallet negative.
+    - Prevents withdrawing more than `goal.savedAmount`.
+  - `PocketViewModel.addOrWithdrawSavingsGoal`:
+    - Accepts `fundMode: String = "PERSONAL"` (`"PERSONAL"`, `"FUND_EXPENSE"`, `"FUND_BORROW"`, `"FUND_IN"`).
+    - Automatically activates `hasVirtualFund` on the target wallet if a Fund mode is chosen, and attaches the corresponding tag (`FUND_EXPENSE`, `FUND_BORROW`, or `FUND_IN`) alongside `SavingsGoal` on the generated transaction.
+  - `RecurringPayConfirmDialog` & `PocketViewModel.confirmRecurringPayment`:
+    - Adds `SubWalletSelectorCards` and `Official Fund Expense` / `Borrow for Personal` selection when `uiState.isFundEnabled` is active, passing the chosen `fundMode` into `confirmRecurringPayment`.
+  - `BalanceAdjustmentScreen`:
+    - When `uiState.isFundEnabled` is active and a non-Fund wallet is selected, allows reconciling either the `Total`, `<Wallet>-Personal`, or `<Wallet>-Fund` balance directly.

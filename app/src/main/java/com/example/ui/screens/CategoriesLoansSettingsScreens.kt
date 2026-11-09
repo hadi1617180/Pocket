@@ -801,7 +801,7 @@ fun LoansScreen(
                                 Text(
                                     text = "$payableSymbol ••••",
                                     style = TabularMoneyMedium,
-                                    color = pocketColors.loanText,
+                                    color = pocketColors.expenseText,
                                     modifier = Modifier.testTag("loans_payable_total")
                                 )
                             } else {
@@ -810,7 +810,7 @@ fun LoansScreen(
                                     currencySymbol = payableSymbol,
                                     includeDecimals = false,
                                     style = TabularMoneyMedium,
-                                    color = pocketColors.loanText,
+                                    color = pocketColors.expenseText,
                                     modifier = Modifier.testTag("loans_payable_total")
                                 )
                             }
@@ -827,46 +827,6 @@ fun LoansScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        item {
-                            FilterChip(
-                                selected = groupByPersonKhata,
-                                onClick = {
-                                    performPocketHaptic(view)
-                                    groupByPersonKhata = true
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Groups, contentDescription = null, modifier = Modifier.size(16.dp))
-                                },
-                                label = { Text("By Person (Khata)") },
-                                modifier = Modifier
-                                    .heightIn(min = 42.dp)
-                                    .testTag("loans_khata_mode_chip")
-                            )
-                        }
-                        item {
-                            FilterChip(
-                                selected = !groupByPersonKhata,
-                                onClick = {
-                                    performPocketHaptic(view)
-                                    groupByPersonKhata = false
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.FormatListBulleted, contentDescription = null, modifier = Modifier.size(16.dp))
-                                },
-                                label = { Text("Individual Loans (${uiState.loanSummaries.size})") },
-                                modifier = Modifier
-                                    .heightIn(min = 42.dp)
-                                    .testTag("loans_individual_mode_chip")
-                            )
-                        }
-                        item {
-                            VerticalDivider(
-                                modifier = Modifier
-                                    .height(24.dp)
-                                    .padding(horizontal = 2.dp),
-                                color = pocketColors.cardBorder
-                            )
-                        }
                         item {
                             FilterChip(
                                 selected = directionFilter == null,
@@ -937,58 +897,73 @@ fun LoansScreen(
                     val net = khata.netReceivableMinusPayable
                     val khataSym = khata.currencySymbol.ifBlank { symbol }
                     val isExpanded = expandedPersonName.equals(khata.personName, ignoreCase = true)
-                    val statusHeadline = when {
-                        kotlin.math.abs(net) < 0.005 -> "${khata.personName} is settled"
-                        net > 0 -> "${khata.personName} owes you net ${AccountingEngine.formatMoney(net, khataSym, includeDecimals = false)}"
-                        else -> "You owe ${khata.personName} net ${AccountingEngine.formatMoney(kotlin.math.abs(net), khataSym, includeDecimals = false)}"
+                    val isPersonSettled = kotlin.math.abs(net) < 0.005
+                    val statusSubtitle = when {
+                        isPersonSettled -> "Settled · ${khata.loans.size} record${if (khata.loans.size == 1) "" else "s"}"
+                        net > 0 -> "Owes you · ${khata.loans.size} record${if (khata.loans.size == 1) "" else "s"}"
+                        else -> "You owe · ${khata.loans.size} record${if (khata.loans.size == 1) "" else "s"}"
+                    }
+                    val netColor = when {
+                        isPersonSettled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        net > 0 -> Color(0xFF22C55E)
+                        else -> Color(0xFFEF4444)
                     }
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable {
                                 performPocketHaptic(view)
                                 expandedPersonName = if (isExpanded) null else khata.personName
                             }
                             .testTag("khata_person_card_${khata.personName}"),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, pocketColors.cardBorder)
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = if (isPersonSettled) 0.45f else 0.72f),
+                        border = BorderStroke(0.5.dp, pocketLiquidGlassBorderBrush(isHighlighted = isExpanded))
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(
                                         text = khata.personName,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = statusHeadline,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = when {
-                                            kotlin.math.abs(net) < 0.005 -> MaterialTheme.colorScheme.onSurfaceVariant
-                                            net > 0 -> pocketColors.incomeText
-                                            else -> pocketColors.loanText
-                                        }
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
-                                        text = "${khata.loans.size} loan record${if (khata.loans.size == 1) "" else "s"} · Tap to ${if (isExpanded) "hide" else "view"} khata ledger",
+                                        text = statusSubtitle,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isPersonSettled) 0.55f else 0.85f)
                                     )
                                 }
-                                Icon(
-                                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = "Expand Khata",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (uiState.settings.hideBalancesPrivacy) {
+                                            "$khataSym ••••"
+                                        } else if (isPersonSettled) {
+                                            "REPAID"
+                                        } else {
+                                            val prefix = if (net > 0) "+" else "−"
+                                            "$prefix${AccountingEngine.formatMoney(kotlin.math.abs(net), khataSym, includeDecimals = false)}"
+                                        },
+                                        style = if (isPersonSettled) MaterialTheme.typography.labelMedium else TabularMoneyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = netColor
+                                    )
+                                    Icon(
+                                        imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = "Expand Khata",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
 
                             if (isExpanded) {
@@ -1063,19 +1038,42 @@ fun LoansScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 khata.loans.forEach { summary ->
                                     val isLent = summary.loan.direction == LoanDirection.LENT.name
+                                    val isSettled = summary.status == "SETTLED" || summary.outstandingPrincipal <= 0.005
                                     val dueMillis = summary.loan.dueDate
+                                    val cleanNote = summary.loan.note
+                                        .replace("[FUND_LOAN_BORROW]", "", ignoreCase = true)
+                                        .replace("[FUND_LOAN]", "", ignoreCase = true)
+                                        .trim()
                                     val loanSymbol = uiState.wallets.firstOrNull { it.id == summary.loan.initialWalletId }
                                         ?.currency?.takeIf { it.isNotBlank() }
                                         ?.let { AccountingEngine.currencySymbolForCode(it) }
                                         ?: symbol
+                                    val primaryTextColor = if (isSettled) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
+                                    val secondaryTextColor = if (isSettled) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.42f)
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
                                     Surface(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(vertical = 4.dp)
                                             .clip(RoundedCornerShape(12.dp))
-                                            .clickable { selectedLoanForRepayment = summary },
+                                            .clickable { selectedLoanForRepayment = summary }
+                                            .testTag("khata_loan_item_${summary.loan.id}"),
                                         shape = RoundedCornerShape(12.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                        color = if (isSettled) {
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                        },
+                                        border = if (isSettled) {
+                                            BorderStroke(1.dp, pocketColors.cardBorder.copy(alpha = 0.35f))
+                                        } else null
                                     ) {
                                         Row(
                                             modifier = Modifier
@@ -1092,13 +1090,14 @@ fun LoansScreen(
                                                     Text(
                                                         text = "${if (isLent) "Lent" else "Borrowed"} ${AccountingEngine.formatMoney(summary.originalPrincipal, loanSymbol, includeDecimals = false)} (${summary.walletName})",
                                                         style = MaterialTheme.typography.bodyMedium,
-                                                        fontWeight = FontWeight.SemiBold
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = primaryTextColor
                                                     )
                                                     if (summary.loan.attachmentUri.isNotBlank()) {
                                                         Icon(
                                                             imageVector = Icons.Default.PhotoCamera,
                                                             contentDescription = "Has slip photo",
-                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            tint = if (isSettled) secondaryTextColor else MaterialTheme.colorScheme.primary,
                                                             modifier = Modifier.size(14.dp)
                                                         )
                                                     }
@@ -1106,30 +1105,42 @@ fun LoansScreen(
                                                 Text(
                                                     text = buildString {
                                                         append("Outstanding: ${AccountingEngine.formatMoney(summary.outstandingPrincipal, loanSymbol, includeDecimals = false)}")
-                                                        if (dueMillis != null) {
+                                                        if (!isSettled && dueMillis != null) {
                                                             append(" · Due ${deadlineFormatter.format(Date(dueMillis))}")
                                                         }
                                                     },
                                                     style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    color = secondaryTextColor
                                                 )
-                                                if (summary.loan.note.isNotBlank()) {
+                                                if (cleanNote.isNotBlank()) {
                                                     Text(
-                                                        text = "Note: ${summary.loan.note}",
+                                                        text = "Note: $cleanNote",
                                                         style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        color = secondaryTextColor
                                                     )
                                                 }
                                             }
-                                            OutlinedButton(
-                                                onClick = { selectedLoanForRepayment = summary },
-                                                modifier = Modifier.heightIn(min = 38.dp),
-                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                            ) {
+                                            if (isSettled) {
                                                 Text(
-                                                    if (summary.status == "SETTLED") "Ledger" else "Repay",
-                                                    style = MaterialTheme.typography.labelMedium
+                                                    text = "REPAID",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                                                    modifier = Modifier
+                                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                        .testTag("loan_repaid_status_${summary.loan.id}")
                                                 )
+                                            } else {
+                                                OutlinedButton(
+                                                    onClick = { selectedLoanForRepayment = summary },
+                                                    modifier = Modifier.heightIn(min = 38.dp),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(
+                                                        "Repay",
+                                                        style = MaterialTheme.typography.labelMedium
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -1163,8 +1174,13 @@ fun LoansScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(summary.loan.personName, style = MaterialTheme.typography.titleMedium)
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = summary.loan.personName,
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                     Text(
                                         "${if (isLent) "Lent" else "Borrowed"} · Original ${AccountingEngine.formatMoney(summary.originalPrincipal, loanSymbol, includeDecimals = false)} · ${summary.walletName}",
                                         style = MaterialTheme.typography.bodySmall,
@@ -1252,7 +1268,10 @@ fun LoansScreen(
                                 }
                             }
 
-                            val cleanLoanNote = summary.loan.note.replace("[FUND_LOAN]", "", ignoreCase = true).trim()
+                            val cleanLoanNote = summary.loan.note
+                                .replace("[FUND_LOAN_BORROW]", "", ignoreCase = true)
+                                .replace("[FUND_LOAN]", "", ignoreCase = true)
+                                .trim()
                             if (cleanLoanNote.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Surface(
@@ -1301,7 +1320,8 @@ fun LoansScreen(
                                     Text(
                                         text = "Outstanding: ${AccountingEngine.formatMoney(summary.outstandingPrincipal, loanSymbol)}",
                                         style = TabularMoneyMedium,
-                                        color = if (isLent) pocketColors.incomeText else pocketColors.loanText
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isLent) Color(0xFF22C55E) else Color(0xFFEF4444)
                                     )
                                     if (summary.principalRepaid > 0.0) {
                                         Text(
@@ -1391,6 +1411,7 @@ fun LoansScreen(
         var noteText by remember { mutableStateOf("") }
         var loanAttachmentUri by remember { mutableStateOf("") }
         var createLoanIsFund by remember { mutableStateOf(false) }
+        var createLoanBorrowForPersonal by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showCreateLoanDialog = false },
@@ -1631,6 +1652,13 @@ fun LoansScreen(
                                         walletNameHint = ws.wallet.name
                                     )
                                     val wsSymbol = AccountingEngine.currencySymbolForCode(ws.wallet.currency)
+                                    val isCashWallet = ws.wallet.name.trim().equals("Cash", ignoreCase = true) ||
+                                        ws.wallet.type.trim().equals("CASH", ignoreCase = true)
+                                    val displayBal = if (isCashWallet && uiState.isFundEnabled && !ws.wallet.isFundWallet) {
+                                        ws.personalBalance
+                                    } else {
+                                        ws.currentBalance
+                                    }
                                     Column {
                                         Text(
                                             text = ws.wallet.name,
@@ -1639,9 +1667,9 @@ fun LoansScreen(
                                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = AccountingEngine.formatMoney(ws.currentBalance, wsSymbol),
+                                            text = AccountingEngine.formatMoney(displayBal, wsSymbol),
                                             style = TabularMoneySmall,
-                                            color = if (ws.currentBalance < 0) pocketColors.expenseText else MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = if (displayBal < 0) pocketColors.expenseText else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
@@ -1657,6 +1685,14 @@ fun LoansScreen(
                             testTagPrefix = "create_loan",
                             hideBalances = uiState.settings.hideBalancesPrivacy
                         )
+                        AnimatedVisibility(visible = createLoanIsFund && direction == LoanDirection.LENT) {
+                            FundLoanTypeSelectorCards(
+                                walletName = selectedCreateLoanWalletSummary.wallet.name,
+                                isBorrowForPersonal = createLoanBorrowForPersonal,
+                                onSelectBorrowForPersonal = { createLoanBorrowForPersonal = it },
+                                testTagPrefix = "create_loan"
+                            )
+                        }
                     }
                     OutlinedTextField(
                         value = noteText,
@@ -1680,7 +1716,12 @@ fun LoansScreen(
                         if (personName.isNotBlank() && p > 0.0) {
                             val cleanNote = noteText.trim()
                             val finalLoanNote = if (uiState.isFundEnabled && walletId > 0L && createLoanIsFund) {
-                                if (cleanNote.isNotBlank()) "[FUND_LOAN] $cleanNote" else "[FUND_LOAN]"
+                                val fundTag = if (direction == LoanDirection.LENT && createLoanBorrowForPersonal) {
+                                    "[FUND_LOAN_BORROW]"
+                                } else {
+                                    "[FUND_LOAN]"
+                                }
+                                if (cleanNote.isNotBlank()) "$fundTag $cleanNote" else fundTag
                             } else {
                                 cleanNote
                             }
@@ -1774,9 +1815,17 @@ fun LoansScreen(
             mutableStateOf(liveSummary.loan.initialWalletId)
         }
         var repaymentIsFund by remember(liveSummary.loan.id) {
-            mutableStateOf(liveSummary.loan.note.contains("[FUND_LOAN]", ignoreCase = true))
+            mutableStateOf(
+                liveSummary.loan.note.contains("[FUND_LOAN]", ignoreCase = true) ||
+                    liveSummary.loan.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
+            )
+        }
+        var repaymentBorrowForPersonal by remember(liveSummary.loan.id) {
+            mutableStateOf(false)
         }
         var repaymentNote by remember { mutableStateOf("") }
+        var repaymentDateMillis by remember(liveSummary.loan.id) { mutableStateOf(System.currentTimeMillis()) }
+        var showRepaymentDatePicker by remember { mutableStateOf(false) }
         var allowOverRepayment by remember { mutableStateOf(false) }
         var errorMsg by remember { mutableStateOf<String?>(null) }
         val loanSymbol = remember(liveSummary.loan.initialWalletId, uiState.wallets, symbol) {
@@ -1795,90 +1844,83 @@ fun LoansScreen(
 
         AlertDialog(
             onDismissRequest = { selectedLoanForRepayment = null },
-            containerColor = pocketColors.overlaySurface,
-            title = { Text("${liveSummary.loan.personName} · Loan Ledger") },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${liveSummary.loan.personName} · Loan Ledger",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { selectedLoanForRepayment = null },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (liveSummary.outstandingPrincipal > 0.005 || allowOverRepayment) {
+                        // Top-left Calendar Date Picker (matches Income & Expense forms)
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { showRepaymentDatePicker = true }
+                                    .testTag("loan_repayment_date_picker_badge")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = "Pick Repayment Date",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(repaymentDateMillis)),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Text(
                         "Original: ${AccountingEngine.formatMoney(liveSummary.originalPrincipal, loanSymbol)} · Outstanding: ${AccountingEngine.formatMoney(liveSummary.outstandingPrincipal, loanSymbol)}",
                         style = TabularMoneySmall,
                         fontWeight = FontWeight.SemiBold
                     )
-                    // Deadline Date Box inside Ledger Dialog
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { loanForDeadlinePicker = liveSummary.loan },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Event,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = "Deadline: ${liveSummary.loan.dueDate?.let { deadlineFormatter.format(Date(it)) } ?: "Not set (tap to set)"}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.Default.EditCalendar,
-                                contentDescription = "Edit Deadline",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-
-                    // Attached Loan Slip / Proof Photo Viewer & Editor (Item 3)
-                    AttachmentPhotoRow(
-                        attachmentUri = liveSummary.loan.attachmentUri,
-                        onAttachmentChanged = { newUri ->
-                            viewModel.updateLoanAttachment(liveSummary.loan, newUri)
-                        },
-                        label = "Attach Loan Slip / Screenshot"
-                    )
 
                     if (liveSummary.outstandingPrincipal > 0.005 || allowOverRepayment) {
                         HorizontalDivider()
                         Text("Record Repayment (Partial or Full)", style = MaterialTheme.typography.titleSmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AssistChip(
-                                onClick = {
-                                    principalPortionText = formatNumericFieldInitialValue(
-                                        AccountingEngine.roundCurrency(liveSummary.outstandingPrincipal / 2.0)
-                                    )
-                                },
-                                label = { Text("50% Partial") }
-                            )
-                            AssistChip(
-                                onClick = {
-                                    principalPortionText = formatNumericFieldInitialValue(
-                                        AccountingEngine.roundCurrency(liveSummary.outstandingPrincipal)
-                                    )
-                                },
-                                label = { Text("100% Full") }
-                            )
-                        }
                         OutlinedTextField(
                             value = principalPortionText,
                             onValueChange = {
@@ -1938,6 +1980,16 @@ fun LoansScreen(
                                 testTagPrefix = "loan_repayment",
                                 hideBalances = uiState.settings.hideBalancesPrivacy
                             )
+                            AnimatedVisibility(
+                                visible = repaymentIsFund && liveSummary.loan.direction == LoanDirection.BORROWED.name
+                            ) {
+                                FundLoanTypeSelectorCards(
+                                    walletName = selectedRepaymentWalletSummary.wallet.name,
+                                    isBorrowForPersonal = repaymentBorrowForPersonal,
+                                    onSelectBorrowForPersonal = { repaymentBorrowForPersonal = it },
+                                    testTagPrefix = "loan_repayment"
+                                )
+                            }
                         }
                         OutlinedTextField(
                             value = repaymentNote,
@@ -1965,7 +2017,10 @@ fun LoansScreen(
                                 ?.currency?.takeIf { it.isNotBlank() }
                                 ?.let { AccountingEngine.currencySymbolForCode(it) }
                         }) ?: loanSymbol
-                        val cleanActNote = act.note.replace("[FUND_LOAN]", "", ignoreCase = true).trim()
+                        val cleanActNote = act.note
+                            .replace("[FUND_LOAN_BORROW]", "", ignoreCase = true)
+                            .replace("[FUND_LOAN]", "", ignoreCase = true)
+                            .trim()
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2006,7 +2061,12 @@ fun LoansScreen(
                                 val resolvedWalletId = repaymentWalletId?.takeIf { it > 0L }
                                 val cleanRepayNote = repaymentNote.trim()
                                 val finalRepayNote = if (uiState.isFundEnabled && resolvedWalletId != null && repaymentIsFund) {
-                                    if (cleanRepayNote.isNotBlank()) "[FUND_LOAN] $cleanRepayNote" else "[FUND_LOAN]"
+                                    val fundTag = if (liveSummary.loan.direction == LoanDirection.BORROWED.name && repaymentBorrowForPersonal) {
+                                        "[FUND_LOAN_BORROW]"
+                                    } else {
+                                        "[FUND_LOAN]"
+                                    }
+                                    if (cleanRepayNote.isNotBlank()) "$fundTag $cleanRepayNote" else fundTag
                                 } else {
                                     cleanRepayNote
                                 }
@@ -2018,7 +2078,7 @@ fun LoansScreen(
                                         principalPortion = AccountingEngine.roundCurrency(prin.coerceAtLeast(0.0)),
                                         interestPortion = AccountingEngine.roundCurrency(intr),
                                         walletId = resolvedWalletId,
-                                        date = System.currentTimeMillis(),
+                                        date = repaymentDateMillis,
                                         note = finalRepayNote
                                     )
                                 )
@@ -2032,22 +2092,141 @@ fun LoansScreen(
                 }
             },
             dismissButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = {
-                            viewModel.deleteLoan(liveSummary.loan.id)
-                            selectedLoanForRepayment = null
-                        },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Delete Loan")
-                    }
-                    TextButton(onClick = { selectedLoanForRepayment = null }) {
-                        Text("Close")
-                    }
+                TextButton(
+                    onClick = {
+                        viewModel.deleteLoan(liveSummary.loan.id)
+                        selectedLoanForRepayment = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete Loan")
                 }
             }
         )
+
+        if (showRepaymentDatePicker) {
+            val repayPickerState = rememberDatePickerState(
+                initialSelectedDateMillis = repaymentDateMillis
+            )
+            DatePickerDialog(
+                onDismissRequest = { showRepaymentDatePicker = false },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            repaymentDateMillis = repayPickerState.selectedDateMillis ?: repaymentDateMillis
+                            showRepaymentDatePicker = false
+                        }
+                    ) {
+                        Text("Select Date")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRepaymentDatePicker = false }) {
+                        Text("Cancel")
+                    }
+                }
+            ) {
+                DatePicker(state = repayPickerState)
+            }
+        }
+    }
+}
+
+@Composable
+fun FundLoanTypeSelectorCards(
+    walletName: String,
+    isBorrowForPersonal: Boolean,
+    onSelectBorrowForPersonal: (Boolean) -> Unit,
+    testTagPrefix: String
+) {
+    val pocketColors = LocalPocketColors.current
+    val isOfficial = !isBorrowForPersonal
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = pocketColors.surfaceElevated,
+        border = BorderStroke(1.dp, pocketColors.cardBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "$walletName-Fund Loan Type",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onSelectBorrowForPersonal(false) }
+                        .testTag("${testTagPrefix}_fund_loan_official_chip"),
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isOfficial) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(
+                        1.dp,
+                        if (isOfficial) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "Official Fund Loan",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOfficial) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Deducts from $walletName-Fund",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onSelectBorrowForPersonal(true) }
+                        .testTag("${testTagPrefix}_fund_loan_borrow_personal_chip"),
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isBorrowForPersonal) pocketColors.expenseText.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(
+                        1.dp,
+                        if (isBorrowForPersonal) pocketColors.expenseText else pocketColors.cardBorder
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "Borrow for Personal",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isBorrowForPersonal) pocketColors.expenseText else MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Tracked as Borrowed Due",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -4156,9 +4335,9 @@ fun FundFeatureGuideScreen(
                     ) {
                         Text(
                             text = if (isBn) {
-                                "ফান্ড (Fund) ফিচারটি কীভাবে কাজ করে?"
+                                "ফান্ড ও সাব-ওয়ালেট (Sub-Wallet) সিস্টেম কীভাবে কাজ করে?"
                             } else {
-                                "How the Fund System Works"
+                                "How the Sub-Wallet & Fund System Works"
                             },
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
@@ -4166,9 +4345,15 @@ fun FundFeatureGuideScreen(
                         )
                         Text(
                             text = if (isBn) {
-                                "অফিস, প্রজেক্ট বা ব্যবসার ফান্ডের টাকা নিজের ব্যক্তিগত পকেটের ক্যাশ ও ডিজিটাল ওয়ালেট (বিকাশ/ব্যাংক) থেকে আলাদা ও নির্ভুলভাবে হিসাব রাখার জন্য এই ফিচারটি তৈরি করা হয়েছে।\n\nএটি অফ (Off) থাকলে অ্যাপের ভেতর থেকে ফান্ডের সব অপশন লুকানো থাকবে। অন (On) করলেই ফান্ডের সব সুবিধা দেখা যাবে।"
+                                "ফান্ড ফিচার চালু থাকলে আলাদা কোনো ফান্ড ওয়ালেট তৈরি করতে হয় না। আপনার প্রতিটি ওয়ালেটের (যেমন: MTB, bKash, Cash) ভেতরে স্বয়ংক্রিয়ভাবে ২টি সাব-ওয়ালেট তৈরি হয়:\n" +
+                                    "• <Wallet>-Personal (আপনার ব্যক্তিগত টাকা)\n" +
+                                    "• <Wallet>-Fund (অফিস, প্রজেক্ট বা ফান্ডের টাকা)\n\n" +
+                                    "হোম পেজের একদম উপরের বড় কার্ডে মেইন সংখ্যা হিসেবে সব ওয়ালেটের মোট Personal Balance দেখায় এবং নিচে ছোট করে Fund: ৳X • Total: ৳Y দেখায়। এছাড়া ওয়ালেট লিস্টের নিচে একটি লকড (Locked) 'Combined Fund' কার্ড থাকে, যেখানে সব ওয়ালেটের ফান্ডের যোগফল একসাথে দেখা যায়।"
                             } else {
-                                "The Fund system lets you manage office, project, or business fund money across your wallets while keeping your actual pocket Cash and personal balances strictly separated.\n\nWhen turned OFF, all Fund options are hidden across the app for a clean personal finance view. Turn it ON anytime to access Fund tracking."
+                                "When the Fund feature is enabled, you don't need a separate Fund wallet. Every wallet (e.g., MTB, bKash, Cash) automatically has 2 sub-wallets:\n" +
+                                    "• <Wallet>-Personal (your personal money)\n" +
+                                    "• <Wallet>-Fund (office, project, or fund money)\n\n" +
+                                    "The main Home hero card displays your total Personal Balance as the primary figure, with 'Fund: ৳X • Total: ৳Y' underneath. At the bottom of your wallet list, a locked 'Combined Fund' card automatically shows the sum of all funds across every wallet."
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -4197,23 +4382,33 @@ fun FundFeatureGuideScreen(
 
                         Text(
                             text = if (isBn) {
-                                "১. আলাদা Fund ওয়ালেট ও পকেটের আসল ক্যাশ:\n• নগদ ফান্ডের টাকা পকেটের সাধারণ Cash ওয়ালেটের সাথে না মিলিয়ে আলাদা 'Fund' ওয়ালেটে রাখুন। এতে আপনার পকেটে আসল কত টাকা আছে তা সবসময় 'Cash' ওয়ালেটে সঠিক দেখাবে, আর পুরো ফান্ডের হিসাব 'Fund' কার্ডে থাকবে।\n\n" +
-                                    "২. ফান্ডে টাকা জমা (Add Income → Add to Fund):\n• যেকোনো ওয়ালেটে ফান্ডের টাকা আসলে Add Income-এ গিয়ে Destination Wallet-এর ডানপাশে 'Add to Fund' টগলটি অন করে সেভ করুন।\n\n" +
-                                    "৩. ফান্ড থেকে খরচ বা ধার (Add Expense):\n• Add Expense-এ গিয়ে Destination Wallet-এর ডানপাশের ড্রপডাউন থেকে বেছে নিন:\n" +
-                                    "  – Personal: আপনার ব্যক্তিগত টাকা থেকে খরচ হবে (ফান্ড অক্ষত থাকবে)।\n" +
-                                    "  – Fund Expense: অফিস বা প্রজেক্টের কাজে খরচ হলে মোট ফান্ড ও ওই ওয়ালেট থেকে কাটবে।\n" +
-                                    "  – Borrow from fund: ফান্ডের টাকা জরুরি ব্যক্তিগত কাজে খরচ করলে তা ফান্ড থেকে কমবে এবং 'Borrowed Due' হিসেবে জমা থাকবে যা পরে ফেরত দিতে পারবেন।\n\n" +
-                                    "৪. এক ওয়ালেট থেকে অন্য ওয়ালেটে ফান্ড ট্রান্সফার ও ফেরত (Transfer):\n• নগদ ফান্ড থেকে বিকাশ বা ব্যাংকে টাকা নিলে Transfer-এ গিয়ে 'Keep as Fund' সিলেক্ট করুন।\n" +
-                                    "• ব্যক্তিগত কাজে ধার নেওয়া টাকা ফেরত দিতে 'Return to Fund' ব্যবহার করুন।"
+                                "১. যেকোনো লেনদেনে সাব-ওয়ালেট সিলেকশন:\n" +
+                                    "• Add Income, Add Expense, Transfer বা Loan—যেকোনো জায়গায় ওয়ালেট (যেমন MTB) সিলেক্ট করলেই নিচে ২টি কার্ড দেখাবে: 'MTB-Personal' এবং 'MTB-Fund'। কোন সাব-ওয়ালেটে টাকা ঢুকবে বা বের হবে তা এখান থেকে ট্যাপ করে সিলেক্ট করুন।\n\n" +
+                                    "২. ফান্ড থেকে অফিসিয়াল খরচ বনাম ব্যক্তিগত ধার (Borrow from Fund):\n" +
+                                    "• Add Expense-এ গিয়ে '<Wallet>-Fund' সিলেক্ট করলে নিচে একটি চেকবক্স আসে: 'This expense is for Personal (Borrowed from Fund)'।\n" +
+                                    "  – চেকবক্স আনচেক (Unchecked) রাখলে: এটি ফান্ডের অফিসিয়াল খরচ (Official Spent) হিসেবে গণ্য হবে।\n" +
+                                    "  – চেকবক্স টিক (Checked) দিলে: ফান্ডের টাকা জরুরি ব্যক্তিগত কাজে খরচ হয়েছে বলে গণ্য হবে এবং তা আপনার 'Borrowed from Fund (Due)' বকেয়া হিসেবে জমা থাকবে (এবং Personal Expense রিপোর্টে যুক্ত হবে)।\n\n" +
+                                    "৩. ট্রান্সফার ও সাব-ওয়ালেট রূপান্তর (Transfer):\n" +
+                                    "• একই ওয়ালেটের ভেতরে (যেমন MTB থেকে MTB) অথবা এক ওয়ালেট থেকে অন্য ওয়ালেটে ট্রান্সফার করার সময় Source এবং Destination উভয় ক্ষেত্রেই '-Personal' বা '-Fund' সিলেক্ট করা যায়:\n" +
+                                    "  – Fund ➔ Fund: এক ওয়ালেট থেকে অন্য ওয়ালেটে ফান্ড স্থানান্তর (Keep as Fund)।\n" +
+                                    "  – Fund ➔ Personal: ফান্ড থেকে নিজের ব্যক্তিগত অ্যাকাউন্টে টাকা ধার নেওয়া (Borrowed Due বাড়বে)।\n" +
+                                    "  – Personal ➔ Fund: ফান্ড থেকে ধার নেওয়া টাকা ফেরত দেওয়া (Return to Fund—Borrowed Due কমবে)।\n\n" +
+                                    "৪. ফান্ড ক্লিয়ার ও নতুন প্রজেক্ট সাইকেল রিসেট:\n" +
+                                    "• লকড 'Combined Fund' কার্ড সরাসরি এডিট বা ডিলিট করা যায় না। যেকোনো ওয়ালেটের ভেতরে ঢুকে '<Wallet>-Fund' ট্যাব থেকে ব্যালেন্স অ্যাডজাস্ট (Edit), 'Return to Fund', 'Clear Fund to 0' (অফিসে ফেরত বা Personal-এ মুভ) অথবা নতুন প্রজেক্টের জন্য 'Reset Cycle Stats' করতে পারবেন।"
                             } else {
-                                "1. Separate Fund Wallet & Actual Pocket Cash:\n• Keep physical cash funds in the dedicated 'Fund' wallet so your 'Cash' wallet always shows only the actual personal cash in your pocket.\n\n" +
-                                    "2. Receiving Fund Money (Add Income → Add to Fund):\n• In Add Income, turn ON the 'Add to Fund' toggle next to Destination Wallet to add incoming money directly to your Fund.\n\n" +
-                                    "3. Spending or Borrowing from Fund (Add Expense):\n• Use the dropdown next to Destination Wallet in Add Expense:\n" +
-                                    "  – Personal: Deducts from your personal money; Fund stays untouched.\n" +
-                                    "  – Fund Expense: Official/project expense deducted from both the wallet and Total Fund.\n" +
-                                    "  – Borrow from fund: Personal spend using Fund money; tracked automatically as 'Borrowed Due' so you can return it later.\n\n" +
-                                    "4. Moving Fund Between Wallets & Returning Borrowed Money (Transfer):\n• When moving Fund money from Cash to bKash or Bank, choose 'Keep as Fund'.\n" +
-                                    "• To repay money you borrowed from the Fund, use 'Return to Fund'."
+                                "1. Selecting a Sub-Wallet in Any Transaction:\n" +
+                                    "• Whenever you select a wallet (e.g., MTB) in Add Income, Add Expense, Transfer, or Loans, 2 sub-wallet cards appear below: 'MTB-Personal' and 'MTB-Fund'. Tap the one you want to use.\n\n" +
+                                    "2. Official Fund Expense vs. Borrowing from Fund:\n" +
+                                    "• In Add Expense, when you select '<Wallet>-Fund', a checkbox appears: 'This expense is for Personal (Borrowed from Fund)'.\n" +
+                                    "  – Unchecked: Recorded as an official project/fund expense ('Official Spent').\n" +
+                                    "  – Checked: Recorded as a personal expense paid using Fund money, automatically increasing your 'Borrowed from Fund (Due)' balance.\n\n" +
+                                    "3. Transfers Between Wallets & Sub-Wallets:\n" +
+                                    "• In Transfer, you can pick '-Personal' or '-Fund' for both Source and Destination (even within the same wallet, e.g., MTB to MTB):\n" +
+                                    "  – Fund ➔ Fund: Moves Fund money between wallets ('Keep as Fund').\n" +
+                                    "  – Fund ➔ Personal: Borrows money from Fund into Personal (increases 'Borrowed Due').\n" +
+                                    "  – Personal ➔ Fund: Repays borrowed Fund money ('Return to Fund', reducing 'Borrowed Due').\n\n" +
+                                    "4. Clearing Fund & Resetting Cycle Stats:\n" +
+                                    "• The 'Combined Fund' card is locked and auto-calculated. Open any individual wallet and switch to its '<Wallet>-Fund' tab to Edit balance, 'Return to Fund', 'Clear Fund to 0' (Deduct as settled or Move to Personal), or 'Reset Cycle Stats' for a new project cycle."
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -4242,17 +4437,19 @@ fun FundFeatureGuideScreen(
                         )
                         Text(
                             text = if (isBn) {
-                                "ধরুন, আপনার পকেটে ব্যক্তিগত ৫,০০০ টাকা ক্যাশ আছে এবং অফিসের কাজের জন্য আপনি ৪,০০,০০০ টাকা ফান্ড পেলেন:\n\n" +
-                                    "• আপনি ৪,০০,০০০ টাকা 'Fund' ওয়ালেটে রাখলেন। ফলে আপনার 'Cash' ওয়ালেটে পকেটের ৫,০০০ টাকাই দেখাবে, আর 'Total Available Balance'-এ ৪,০৫,০০০ টাকা থাকবে।\n" +
-                                    "• এরপর ফান্ড থেকে ৫০,০০০ টাকা বিকাশে নিলেন ('Keep as Fund')। এখন বিকাশের ভেতরেই ৫০,০০০ টাকা ফান্ড হিসেবে ট্র্যাক হবে।\n" +
-                                    "• বিকাশ বা নগদ ফান্ড থেকে অফিসের কাজে ১০,০০০ টাকা খরচ করলে 'Fund Expense' দেবেন—মোট ফান্ড কমে ৩,৯০,০০০ টাকা হবে।\n" +
-                                    "• নিজের ব্যক্তিগত কাজে ফান্ড থেকে ২,০০০ টাকা খরচ করলে 'Borrow from fund' দেবেন—ফান্ড কার্ডে 'Borrowed Due: ৳2,000' দেখাবে। পরে নিজের টাকা থেকে 'Return to Fund' করলেই বকেয়া ০ হয়ে ফান্ড আবার পূর্ণ হয়ে যাবে!"
+                                "ধরুন, আপনার MTB ব্যাংকে নিজের ১০,০০০ টাকা আছে এবং অফিসের প্রজেক্টের জন্য ৫০,০০০ টাকা ফান্ড পেলেন:\n\n" +
+                                    "• Add Income-এ গিয়ে MTB সিলেক্ট করে নিচে 'MTB-Fund' কার্ডে ৫০,০০০ টাকা যোগ করলেন। এখন MTB কার্ডে মোট ৳60,000 দেখাবে এবং নিচে 'MTB-Personal: ৳10,000 • MTB-Fund: ৳50,000' লেখা থাকবে।\n" +
+                                    "• সেখান থেকে ১৫,০০০ টাকা বিকাশে ফান্ড হিসেবে পাঠাতে Transfer-এ গিয়ে 'MTB-Fund ➔ bKash-Fund' সিলেক্ট করলেন। এখন MTB-Fund-এ ৩৫,০০০ এবং bKash-Fund-এ ১৫,০০০ টাকা থাকবে, আর নিচে লকড 'Combined Fund' কার্ডে মোট ফান্ড ৳50,000 দেখাবে।\n" +
+                                    "• MTB-Fund থেকে অফিসের কাজে ৫,০০০ টাকা খরচ করলে (চেকবক্স আনচেক) ফান্ড কমে ৳45,000 হবে এবং Official Spent: ৳5,000 দেখাবে।\n" +
+                                    "• জরুরি ব্যক্তিগত কাজে MTB-Fund থেকে ৩,০০০ টাকা খরচ করার সময় 'This expense is for Personal (Borrowed from Fund)' চেকবক্সে টিক দিলে ফান্ড কমে ৳42,000 হবে এবং 'Borrowed Due: ৳3,000' জমা হবে।\n" +
+                                    "• পরে যেকোনো ওয়ালেটের Personal টাকা থেকে 'Return to Fund' বাটনে ট্যাপ করে ৩,০০০ টাকা ফেরত দিলেই বকেয়া ৳0 হয়ে ফান্ড আবার ৳45,000 হয়ে যাবে!"
                             } else {
-                                "Suppose you have ৳5,000 personal Cash in your pocket and receive ৳4,00,000 in cash as an office fund:\n\n" +
-                                    "• Add ৳4,00,000 to your 'Fund' wallet. Your 'Cash' wallet continues to show ৳5,000 (your real pocket money), while Total Available Balance shows ৳4,05,000.\n" +
-                                    "• Transfer ৳50,000 from Fund to bKash using 'Keep as Fund'. Now bKash holds ৳50,000 of your Fund alongside your personal bKash balance.\n" +
-                                    "• Spend ৳10,000 for office work from bKash or Fund using 'Fund Expense' — Total Fund becomes ৳3,90,000.\n" +
-                                    "• Spend ৳2,000 for personal use using 'Borrow from fund' — it records 'Borrowed Due: ৳2,000'. When you repay it via 'Return to Fund', the due clears to 0 and your Fund balance is restored!"
+                                "Suppose you have ৳10,000 of your own money in MTB and receive ৳50,000 for an office project:\n\n" +
+                                    "• In Add Income, select MTB and tap 'MTB-Fund' to add ৳50,000. Your MTB card now shows ৳60,000 total with subtitle 'MTB-Personal: ৳10,000 • MTB-Fund: ৳50,000'.\n" +
+                                    "• Transfer ৳15,000 to bKash for project expenses using 'MTB-Fund ➔ bKash-Fund'. Now MTB-Fund has ৳35,000, bKash-Fund has ৳15,000, and the locked 'Combined Fund' card shows ৳50,000.\n" +
+                                    "• Spend ৳5,000 on office work from MTB-Fund (checkbox unchecked) — Combined Fund becomes ৳45,000 and Official Spent shows ৳5,000.\n" +
+                                    "• Spend ৳3,000 for personal needs from MTB-Fund with 'This expense is for Personal (Borrowed from Fund)' checked — Combined Fund becomes ৳42,000 and 'Borrowed Due: ৳3,000' is tracked.\n" +
+                                    "• Later, tap 'Return to Fund' (or transfer from any <Wallet>-Personal to <Wallet>-Fund) to repay ৳3,000 — Borrowed Due resets to ৳0 and your Fund returns to ৳45,000!"
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -4467,8 +4664,15 @@ fun WidgetConfigScreen(
                                         modifier = Modifier.weight(1f)
                                     )
                                     val wsSymbol = AccountingEngine.currencySymbolForCode(ws.wallet.currency)
+                                    val isCashWallet = ws.wallet.name.trim().equals("Cash", ignoreCase = true) ||
+                                        ws.wallet.type.trim().equals("CASH", ignoreCase = true)
+                                    val displayBal = if (isCashWallet && uiState.isFundEnabled && !ws.wallet.isFundWallet) {
+                                        ws.personalBalance
+                                    } else {
+                                        ws.currentBalance
+                                    }
                                     Text(
-                                        text = AccountingEngine.formatMoney(ws.currentBalance, wsSymbol),
+                                        text = AccountingEngine.formatMoney(displayBal, wsSymbol),
                                         style = TabularMoneySmall
                                     )
                                 }
@@ -4536,8 +4740,15 @@ fun WidgetConfigScreen(
                                         modifier = Modifier.weight(1f)
                                     )
                                     val wsSymbol = AccountingEngine.currencySymbolForCode(ws.wallet.currency)
+                                    val isCashWallet = ws.wallet.name.trim().equals("Cash", ignoreCase = true) ||
+                                        ws.wallet.type.trim().equals("CASH", ignoreCase = true)
+                                    val displayBal = if (isCashWallet && uiState.isFundEnabled && !ws.wallet.isFundWallet) {
+                                        ws.personalBalance
+                                    } else {
+                                        ws.currentBalance
+                                    }
                                     Text(
-                                        text = AccountingEngine.formatMoney(ws.currentBalance, wsSymbol),
+                                        text = AccountingEngine.formatMoney(displayBal, wsSymbol),
                                         style = TabularMoneySmall
                                     )
                                 }
@@ -4915,11 +5126,23 @@ fun RecurringPayConfirmDialog(
             else -> 0.0
         }
     }
+    var recurringFundMode by remember(recurring.id) { mutableStateOf("PERSONAL") } // "PERSONAL", "FUND_EXPENSE", "FUND_BORROW", "FUND_IN"
+    val isRecurringFundSelected = recurringFundMode == "FUND_EXPENSE" || recurringFundMode == "FUND_BORROW" || recurringFundMode == "FUND_IN"
+
     val totalWalletDebit = effectivePrincipal + effectiveServiceFee
+    val selectedAvailableBucketBalance = remember(selectedWalletSummary, uiState.isFundEnabled, recurringFundMode) {
+        when {
+            selectedWalletSummary == null -> 0.0
+            selectedWalletSummary.wallet.isFundWallet -> selectedWalletSummary.currentBalance
+            uiState.isFundEnabled && isRecurringFundSelected -> selectedWalletSummary.fundBalance
+            uiState.isFundEnabled -> selectedWalletSummary.personalBalance
+            else -> selectedWalletSummary.currentBalance
+        }
+    }
     val insufficientBalance = !isIncome &&
         selectedWalletSummary != null &&
         totalWalletDebit > 0.0 &&
-        (selectedWalletSummary.currentBalance - totalWalletDebit) < -0.005
+        (selectedAvailableBucketBalance - totalWalletDebit) < -0.005
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -4985,6 +5208,11 @@ fun RecurringPayConfirmDialog(
                     items(activeWallets, key = { it.wallet.id }) { summary ->
                         val isSelected = summary.wallet.id == selectedWalletId
                         val chipSym = AccountingEngine.currencySymbolForCode(summary.wallet.currency)
+                        val chipBal = if (uiState.isFundEnabled && summary.wallet.name.trim().equals("Cash", ignoreCase = true) && !summary.wallet.isFundWallet) {
+                            summary.personalBalance
+                        } else {
+                            summary.currentBalance
+                        }
                         FilterChip(
                             selected = isSelected,
                             onClick = {
@@ -4993,13 +5221,102 @@ fun RecurringPayConfirmDialog(
                             },
                             label = {
                                 Text(
-                                    "${summary.wallet.name} (${AccountingEngine.formatMoney(summary.currentBalance, chipSym, includeDecimals = false)})"
+                                    "${summary.wallet.name} (${AccountingEngine.formatMoney(chipBal, chipSym, includeDecimals = false)})"
                                 )
                             },
                             modifier = Modifier
                                 .heightIn(min = 48.dp)
                                 .testTag("recurring_pay_wallet_chip_${summary.wallet.name}")
                         )
+                    }
+                }
+
+                if (uiState.isFundEnabled && selectedWalletSummary != null && !selectedWalletSummary.wallet.isFundWallet) {
+                    SubWalletSelectorCards(
+                        walletSummary = selectedWalletSummary,
+                        selectedIsFund = isRecurringFundSelected,
+                        onSelectSubWallet = { chooseFund ->
+                            recurringFundMode = if (!chooseFund) {
+                                "PERSONAL"
+                            } else if (isIncome) {
+                                "FUND_IN"
+                            } else {
+                                if (recurringFundMode == "FUND_BORROW") "FUND_BORROW" else "FUND_EXPENSE"
+                            }
+                        },
+                        testTagPrefix = "recurring_pay",
+                        hideBalances = uiState.settings.hideBalancesPrivacy
+                    )
+
+                    AnimatedVisibility(visible = !isIncome && isRecurringFundSelected) {
+                        val wName = selectedWalletSummary.wallet.name
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val isOfficial = recurringFundMode == "FUND_EXPENSE"
+                            val isBorrow = recurringFundMode == "FUND_BORROW"
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { recurringFundMode = "FUND_EXPENSE" }
+                                    .testTag("recurring_pay_fund_official_chip"),
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isOfficial) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isOfficial) MaterialTheme.colorScheme.primary else pocketColors.cardBorder
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = "Official Fund Expense",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isOfficial) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Deducts from $wName-Fund",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { recurringFundMode = "FUND_BORROW" }
+                                    .testTag("recurring_pay_fund_borrow_chip"),
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isBorrow) pocketColors.expenseText.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isBorrow) pocketColors.expenseText else pocketColors.cardBorder
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = "Borrow for Personal",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isBorrow) pocketColors.expenseText else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Adds to Borrowed Due",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isBorrow) pocketColors.expenseText else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -5160,12 +5477,18 @@ fun RecurringPayConfirmDialog(
                         errorMsg = "Please pick a wallet."
                     } else {
                         performPocketHaptic(view)
+                        val effectiveFundMode = when {
+                            !uiState.isFundEnabled -> "PERSONAL"
+                            selectedWalletSummary?.wallet?.isFundWallet == true -> if (isIncome) "FUND_IN" else "FUND_EXPENSE"
+                            else -> recurringFundMode
+                        }
                         viewModel.confirmRecurringPayment(
                             recurringId = recurring.id,
                             chosenWalletId = selectedWalletId,
                             finalAmount = amt,
                             note = noteText,
-                            serviceFeeAmount = effectiveServiceFee
+                            serviceFeeAmount = effectiveServiceFee,
+                            fundMode = effectiveFundMode
                         )
                     }
                 },

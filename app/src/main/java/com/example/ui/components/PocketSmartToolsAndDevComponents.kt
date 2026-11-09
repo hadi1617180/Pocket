@@ -104,6 +104,21 @@ fun MathAmountTextField(
         tfv
     }
 
+    val pocketColors = LocalPocketColors.current
+    val isHeroAmountField = textStyle.fontSize.value >= 26f
+    val customColors = if (isHeroAmountField) {
+        OutlinedTextFieldDefaults.colors(
+            unfocusedBorderColor = Color.Transparent,
+            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+            unfocusedContainerColor = pocketColors.surfaceElevated.copy(alpha = 0.42f),
+            focusedContainerColor = pocketColors.surfaceElevated.copy(alpha = 0.62f)
+        )
+    } else {
+        OutlinedTextFieldDefaults.colors(
+            unfocusedBorderColor = pocketColors.cardBorder.copy(alpha = 0.55f)
+        )
+    }
+
     OutlinedTextField(
         value = effectiveTfv,
         onValueChange = { nextTfv ->
@@ -129,7 +144,8 @@ fun MathAmountTextField(
         singleLine = singleLine,
         textStyle = textStyle,
         keyboardOptions = keyboardOptions,
-        shape = shape
+        shape = if (isHeroAmountField) RoundedCornerShape(20.dp) else shape,
+        colors = customColors
     )
 }
 

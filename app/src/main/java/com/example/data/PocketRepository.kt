@@ -1258,6 +1258,7 @@ class PocketRepository(private val dao: PocketDao) {
         finalAmount: Double,
         note: String = "",
         serviceFeeAmount: Double = 0.0,
+        fundMode: String = "PERSONAL",
         paidAtMillis: Long = System.currentTimeMillis()
     ): Long {
         val recurring = dao.getRecurringTransactionById(recurringId) ?: return 0L
@@ -1268,6 +1269,14 @@ class PocketRepository(private val dao: PocketDao) {
             if (recurring.note.isNotBlank()) "${recurring.title} — ${recurring.note}" else recurring.title
         }
 
+        val fundTag = when (fundMode.uppercase()) {
+            "FUND_EXPENSE" -> if (recurring.type == TransactionType.EXPENSE.name) "FUND_EXPENSE" else "FUND_IN"
+            "FUND_BORROW" -> if (recurring.type == TransactionType.EXPENSE.name) "FUND_BORROW" else "FUND_IN"
+            "FUND_IN" -> "FUND_IN"
+            else -> null
+        }
+        val mainTags = if (fundTag != null) "recurring, $fundTag" else "recurring"
+
         val txId = dao.insertTransaction(
             TransactionEntity(
                 type = recurring.type,
@@ -1277,13 +1286,19 @@ class PocketRepository(private val dao: PocketDao) {
                 categoryId = recurring.categoryId,
                 note = resolvedNote,
                 reference = "REC-${recurring.id}",
-                tags = "recurring"
+                tags = mainTags
             )
         )
 
         val cleanFee = AccountingEngine.roundCurrency(serviceFeeAmount)
         if (cleanFee > 0.0) {
             val feeCatId = getOrCreateFeeCategoryId()
+            val feeFundTag = when (fundMode.uppercase()) {
+                "FUND_EXPENSE", "FUND_IN" -> "FUND_EXPENSE"
+                "FUND_BORROW" -> "FUND_BORROW"
+                else -> null
+            }
+            val feeTags = if (feeFundTag != null) "fee, recurring, $feeFundTag" else "fee, recurring"
             dao.insertTransaction(
                 TransactionEntity(
                     type = TransactionType.EXPENSE.name,
@@ -1293,7 +1308,7 @@ class PocketRepository(private val dao: PocketDao) {
                     categoryId = feeCatId,
                     note = "Service charge: ${recurring.title}",
                     reference = "FEE-REC-${recurring.id}",
-                    tags = "fee, recurring",
+                    tags = feeTags,
                     parentTransactionId = txId
                 )
             )
@@ -1358,7 +1373,16 @@ class PocketRepository(private val dao: PocketDao) {
         dao.clearAllSavingsGoals()
         val existingWallets = dao.getAllWallets()
         existingWallets.forEach { wallet ->
-            dao.updateWallet(wallet.copy(openingBalance = 0.0))
+            val zeroedWallet = if (wallet.hasVirtualFund || kotlin.math.abs(wallet.openingFundBalance) > 0.005) {
+                wallet.withVirtualFund(
+                    enabled = wallet.hasVirtualFund,
+                    openingFund = 0.0,
+                    resetAtMillis = 0L
+                ).copy(openingBalance = 0.0)
+            } else {
+                wallet.copy(openingBalance = 0.0)
+            }
+            dao.updateWallet(zeroedWallet)
         }
     }
 
@@ -1472,12 +1496,21 @@ class PocketRepository(private val dao: PocketDao) {
             if (matchIndex >= 0) {
                 val existing = mergedWallets[matchIndex]
                 walletIdMap[localW.id] = existing.id
-                mergedWallets[matchIndex] = existing.copy(
+                val baseMerged = existing.copy(
                     openingBalance = if (existing.openingBalance == 0.0 && localW.openingBalance != 0.0) localW.openingBalance else existing.openingBalance,
                     creditLimit = if (existing.creditLimit <= 0.0 && localW.creditLimit > 0.0) localW.creditLimit else existing.creditLimit,
                     statementDay = if (existing.statementDay <= 0 && localW.statementDay > 0) localW.statementDay else existing.statementDay,
                     paymentDueDay = if (existing.paymentDueDay <= 0 && localW.paymentDueDay > 0) localW.paymentDueDay else existing.paymentDueDay
                 )
+                mergedWallets[matchIndex] = if (!baseMerged.hasVirtualFund && localW.hasVirtualFund) {
+                    baseMerged.withVirtualFund(
+                        enabled = true,
+                        openingFund = localW.openingFundBalance,
+                        resetAtMillis = localW.fundResetAtMillis
+                    )
+                } else {
+                    baseMerged
+                }
             } else {
                 val newId = nextWalletId++
                 mergedWallets.add(localW.copy(id = newId, sortOrder = mergedWallets.size + 1))
@@ -1549,7 +1582,9 @@ class PocketRepository(private val dao: PocketDao) {
             val mappedSrc = walletIdMap[localTr.sourceWalletId] ?: fallbackWalletId
             val mappedDst = walletIdMap[localTr.destinationWalletId] ?: fallbackWalletId
             val isInternalFundMove = localTr.note.contains("[FUND_RETURN]", ignoreCase = true) ||
-                localTr.note.contains("[FUND_BORROW]", ignoreCase = true)
+                localTr.note.contains("[FUND_BORROW]", ignoreCase = true) ||
+                localTr.note.contains("[FUND_SETTLE]", ignoreCase = true) ||
+                localTr.note.contains("[FUND_TOPUP]", ignoreCase = true)
             if (mappedSrc == mappedDst && !isInternalFundMove) continue
             val match = mergedTransfers.firstOrNull {
                 it.sourceWalletId == mappedSrc &&
