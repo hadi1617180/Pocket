@@ -47,6 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -86,6 +87,7 @@ import com.example.notification.PocketNotificationManager
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -101,7 +103,6 @@ fun WalletsOverviewScreen(
     var showSavingsGoalDialog by remember { mutableStateOf(false) }
     var editingSavingsGoal by remember { mutableStateOf<SavingsGoalEntity?>(null) }
     var fundTargetGoal by remember { mutableStateOf<Pair<SavingsGoalEntity, Boolean>?>(null) }
-    var isFabExpanded by remember { mutableStateOf(false) }
     var showFundBreakdownPopover by remember { mutableStateOf(false) }
     var isFundHeroExpanded by rememberSaveable { mutableStateOf(false) }
     val symbol = "৳"
@@ -220,20 +221,11 @@ fun WalletsOverviewScreen(
         }
     }
 
-    val isOverlayActive = isFabExpanded || showFundBreakdownPopover || showWalletDialog || showSavingsGoalDialog || fundTargetGoal != null || quickAdjustWalletSummary != null
+    val isOverlayActive = showFundBreakdownPopover || showWalletDialog || showSavingsGoalDialog || fundTargetGoal != null || quickAdjustWalletSummary != null
     val overviewBlur by animateDpAsState(
         targetValue = if (isOverlayActive) 12.dp else 0.dp,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "wallets_overview_blur"
-    )
-
-    val fabRotation by animateFloatAsState(
-        targetValue = if (isFabExpanded) 45f else 0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "fab_icon_rotation"
     )
 
     Box(
@@ -398,6 +390,26 @@ fun WalletsOverviewScreen(
                                     .size(18.dp)
                                     .rotate(syncRotation)
                                     .testTag("home_background_sync_icon")
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                if (uiState.canUndo) {
+                                    performPocketHaptic(view)
+                                    viewModel.undoLastAction()
+                                }
+                            },
+                            enabled = uiState.canUndo,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("wallets_top_right_undo_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = "Undo Last Action",
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (uiState.canUndo) 0.85f else 0.3f),
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
@@ -568,45 +580,47 @@ fun WalletsOverviewScreen(
                                                 }
                                             }
 
-                                            // 2-Column Tabular Subtitle: Total label on left, ৳ amount on right
-                                            Row(
-                                                verticalAlignment = Alignment.Top,
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                                modifier = Modifier.padding(top = 2.dp)
-                                            ) {
-                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                                    Text(
-                                                        text = "Total",
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                    if (uiState.foreignCurrencyTotals.isNotEmpty()) {
-                                                        uiState.foreignCurrencyTotals.take(2).forEach { (currCode, _) ->
-                                                            Text(
-                                                                text = currCode,
-                                                                style = MaterialTheme.typography.labelSmall,
-                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                            )
+                                            // 2-Column Tabular Subtitle: Total label on left, ৳ amount on right (only if Fund Feature is enabled)
+                                            if (uiState.isFundEnabled) {
+                                                Row(
+                                                    verticalAlignment = Alignment.Top,
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                    modifier = Modifier.padding(top = 2.dp)
+                                                ) {
+                                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                        Text(
+                                                            text = "Total (Personal+Fund)",
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                        if (uiState.foreignCurrencyTotals.isNotEmpty()) {
+                                                            uiState.foreignCurrencyTotals.take(2).forEach { (currCode, _) ->
+                                                                Text(
+                                                                    text = currCode,
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                                )
+                                                            }
                                                         }
                                                     }
-                                                }
-                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                                    Text(
-                                                        text = if (hideBalances) "$symbol ••••" else AccountingEngine.formatMoney(uiState.totalAvailableBalance, symbol),
-                                                        style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        modifier = Modifier.testTag("wallets_top_fund_total_pill")
-                                                    )
-                                                    if (uiState.foreignCurrencyTotals.isNotEmpty()) {
-                                                        uiState.foreignCurrencyTotals.take(2).forEach { (currCode, currBal) ->
-                                                            val currSym = AccountingEngine.currencySymbolForCode(currCode)
-                                                            Text(
-                                                                text = if (hideBalances) "$currSym ••••" else "${AccountingEngine.formatMoney(currBal, currSym, includeDecimals = false)}",
-                                                                style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
-                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                modifier = Modifier.testTag("wallets_foreign_total_$currCode")
-                                                            )
+                                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                        Text(
+                                                            text = if (hideBalances) "$symbol ••••" else AccountingEngine.formatMoney(uiState.totalAvailableBalance, symbol),
+                                                            style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            modifier = Modifier.testTag("wallets_top_fund_total_pill")
+                                                        )
+                                                        if (uiState.foreignCurrencyTotals.isNotEmpty()) {
+                                                            uiState.foreignCurrencyTotals.take(2).forEach { (currCode, currBal) ->
+                                                                val currSym = AccountingEngine.currencySymbolForCode(currCode)
+                                                                Text(
+                                                                    text = if (hideBalances) "$currSym ••••" else "${AccountingEngine.formatMoney(currBal, currSym, includeDecimals = false)}",
+                                                                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                    modifier = Modifier.testTag("wallets_foreign_total_$currCode")
+                                                                )
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -746,6 +760,10 @@ fun WalletsOverviewScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clip(RoundedCornerShape(26.dp))
+                                    .clickable {
+                                        performPocketHaptic(view)
+                                        viewModel.navigateTo(PocketScreen.WalletDetail(VIRTUAL_FUND_WALLET_ID))
+                                    }
                                     .testTag("auto_summed_fund_wallet_card"),
                                 shape = RoundedCornerShape(26.dp),
                                 color = heroSurfaceColor,
@@ -766,11 +784,22 @@ fun WalletsOverviewScreen(
                                             modifier = Modifier.weight(1f),
                                             verticalArrangement = Arrangement.spacedBy(2.dp)
                                         ) {
-                                            Text(
-                                                text = "Fund Wallet Balance",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Fund Wallet Balance",
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Icon(
+                                                    imageVector = Icons.Default.ChevronRight,
+                                                    contentDescription = "View Fund Details",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -816,7 +845,7 @@ fun WalletsOverviewScreen(
                                             ) {
                                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                                     Text(
-                                                        text = "Total",
+                                                        text = "Total (Personal+Fund)",
                                                         style = MaterialTheme.typography.labelMedium,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
@@ -1240,7 +1269,7 @@ fun WalletsOverviewScreen(
                                 )
                             }
                             val isCashWallet = w.name.trim().equals("Cash", ignoreCase = true)
-                            if (uiState.isFundEnabled && !w.isFundWallet && (kotlin.math.abs(summary.fundBalance) > 0.005 || summary.fundBorrowedDue > 0.005)) {
+                            if (uiState.isFundEnabled && !w.isFundWallet && kotlin.math.abs(summary.fundBalance) > 0.005) {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 val subWalletRows = buildList {
                                     if (isCashWallet) {
@@ -1267,15 +1296,6 @@ fun WalletsOverviewScreen(
                                             MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     )
-                                    if (summary.fundBorrowedDue > 0.005) {
-                                        add(
-                                            Triple(
-                                                "Borrowed Due",
-                                                if (hideBalances) "$walletSymbol ••••" else AccountingEngine.formatMoney(summary.fundBorrowedDue, walletSymbol, includeDecimals = false),
-                                                pocketColors.expenseText
-                                            )
-                                        )
-                                    }
                                 }
                                 Row(
                                     verticalAlignment = Alignment.Top,
@@ -1608,9 +1628,9 @@ fun WalletsOverviewScreen(
             }
         }
 
-        // Subtle lighter scrim over 12.dp blurred background when upward FAB speed-dial, Fund breakdown popover, or dialog is open
+        // Subtle lighter scrim over 12.dp blurred background when Fund breakdown popover or dialog is open
         AnimatedVisibility(
-            visible = isFabExpanded || showFundBreakdownPopover || showWalletDialog || showSavingsGoalDialog || fundTargetGoal != null || quickAdjustWalletSummary != null,
+            visible = showFundBreakdownPopover || showWalletDialog || showSavingsGoalDialog || fundTargetGoal != null || quickAdjustWalletSummary != null,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -1622,7 +1642,6 @@ fun WalletsOverviewScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        if (isFabExpanded) isFabExpanded = false
                         if (showFundBreakdownPopover) showFundBreakdownPopover = false
                     }
             )
@@ -1752,107 +1771,6 @@ fun WalletsOverviewScreen(
                 }
             }
         }
-
-        // Upward-expanding Liquid FAB Menu + FloatingActionButton (+) at bottom right
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 18.dp, bottom = 104.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            AnimatedVisibility(
-                visible = isFabExpanded,
-                enter = slideInVertically(
-                    initialOffsetY = { it / 2 },
-                    animationSpec = spring(
-                        dampingRatio = 0.62f,
-                        stiffness = 300f
-                    )
-                ) + scaleIn(
-                    initialScale = 0.75f,
-                    animationSpec = spring(
-                        dampingRatio = 0.62f,
-                        stiffness = 300f
-                    )
-                ) + fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
-                exit = slideOutVertically(
-                    targetOffsetY = { it / 2 },
-                    animationSpec = spring(stiffness = Spring.StiffnessMedium)
-                ) + scaleOut(
-                    targetScale = 0.8f,
-                    animationSpec = spring(stiffness = Spring.StiffnessMedium)
-                ) + fadeOut()
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    LiquidFabActionItem(
-                        icon = Icons.Default.AddCircleOutline,
-                        label = "Income",
-                        accentColor = pocketColors.incomeText,
-                        containerColor = pocketColors.overlayIncomeContainer,
-                        testTag = "quick_action_income",
-                        onClick = {
-                            isFabExpanded = false
-                            viewModel.navigateTo(PocketScreen.TransactionForm(initialType = TransactionType.INCOME))
-                        }
-                    )
-                    LiquidFabActionItem(
-                        icon = Icons.Default.RemoveCircleOutline,
-                        label = "Expense",
-                        accentColor = pocketColors.expenseText,
-                        containerColor = pocketColors.overlayExpenseContainer,
-                        testTag = "quick_action_expense",
-                        onClick = {
-                            isFabExpanded = false
-                            viewModel.navigateTo(PocketScreen.TransactionForm(initialType = TransactionType.EXPENSE))
-                        }
-                    )
-                    LiquidFabActionItem(
-                        icon = Icons.AutoMirrored.Filled.CompareArrows,
-                        label = "Transfer",
-                        accentColor = pocketColors.transferText,
-                        containerColor = pocketColors.overlayTransferContainer,
-                        testTag = "quick_action_transfer",
-                        onClick = {
-                            isFabExpanded = false
-                            viewModel.navigateTo(PocketScreen.TransferForm())
-                        }
-                    )
-                    LiquidFabActionItem(
-                        icon = Icons.Default.Handshake,
-                        label = "Loans",
-                        accentColor = pocketColors.loanText,
-                        containerColor = pocketColors.overlayLoanContainer,
-                        testTag = "quick_action_loans",
-                        onClick = {
-                            isFabExpanded = false
-                            viewModel.navigateTo(PocketScreen.LoansManagement(openCreateDialog = true))
-                        }
-                    )
-                }
-            }
-
-            FloatingActionButton(
-                onClick = { isFabExpanded = !isFabExpanded },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = Color.White,
-                shape = CircleShape,
-                modifier = Modifier
-                    .size(58.dp)
-                    .testTag("home_fab_record")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Record",
-                    modifier = Modifier
-                        .size(28.dp)
-                        .rotate(fabRotation)
-                )
-            }
-        }
     }
 
     if (showWalletDialog) {
@@ -1917,7 +1835,7 @@ fun WalletsOverviewScreen(
 }
 
 @Composable
-private fun LiquidFabActionItem(
+fun LiquidFabActionItem(
     icon: ImageVector,
     label: String,
     accentColor: Color,
@@ -2007,11 +1925,11 @@ fun WalletDetailScreen(
                             entry.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
                             entry.tags.contains("FUND_BORROW", ignoreCase = true)
                     LedgerEntryKind.TRANSFER -> {
-                        val isFundTransfer = entry.note.contains("[FUND_TRANSFER]", ignoreCase = true)
-                        val isFundBorrow = entry.note.contains("[FUND_BORROW]", ignoreCase = true)
-                        val isFundSettle = entry.note.contains("[FUND_SETTLE]", ignoreCase = true)
-                        val isFundReturn = entry.note.contains("[FUND_RETURN]", ignoreCase = true)
-                        val isFundTopup = entry.note.contains("[FUND_TOPUP]", ignoreCase = true)
+                        val isFundTransfer = entry.note.contains("[FUND_TRANSFER]", ignoreCase = true) || entry.tags.contains("FUND_TRANSFER", ignoreCase = true)
+                        val isFundBorrow = entry.note.contains("[FUND_BORROW]", ignoreCase = true) || entry.tags.contains("FUND_BORROW", ignoreCase = true)
+                        val isFundSettle = entry.note.contains("[FUND_SETTLE]", ignoreCase = true) || entry.tags.contains("FUND_SETTLE", ignoreCase = true)
+                        val isFundReturn = entry.note.contains("[FUND_RETURN]", ignoreCase = true) || entry.tags.contains("FUND_RETURN", ignoreCase = true)
+                        val isFundTopup = entry.note.contains("[FUND_TOPUP]", ignoreCase = true) || entry.tags.contains("FUND_TOPUP", ignoreCase = true)
                         when {
                             isFundTransfer -> true
                             isFundBorrow || isFundSettle -> entry.walletId == wallet.id // source is Fund, dest is Personal
@@ -2032,7 +1950,10 @@ fun WalletDetailScreen(
                     (entry.note.contains("[FUND_BORROW]", ignoreCase = true) ||
                         entry.note.contains("[FUND_SETTLE]", ignoreCase = true) ||
                         entry.note.contains("[FUND_RETURN]", ignoreCase = true) ||
-                        entry.note.contains("[FUND_TOPUP]", ignoreCase = true))
+                        entry.note.contains("[FUND_TOPUP]", ignoreCase = true) ||
+                        entry.tags.contains("FUND_BORROW", ignoreCase = true) ||
+                        entry.tags.contains("FUND_RETURN", ignoreCase = true) ||
+                        entry.tags.contains("FUND_TOPUP", ignoreCase = true))
                 when (selectedSubWalletTab) {
                     2 -> isFundEntry || isSameWalletDualTransfer
                     1 -> !isFundEntry || isSameWalletDualTransfer || isFundBorrowExpense
@@ -2215,9 +2136,8 @@ fun WalletDetailScreen(
                             )
                         }
                         if (showSubWallets) {
-                            val effectiveDue = maxOf(summary.fundBorrowedDue, uiState.totalFundBorrowedDue)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 color = pocketColors.surfaceElevated,
                                 border = BorderStroke(1.dp, pocketColors.cardBorder),
                                 modifier = Modifier.fillMaxWidth()
@@ -2225,53 +2145,53 @@ fun WalletDetailScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                                        ) {
-                                            Text(
-                                                text = if (isBalanceHidden) {
-                                                    "${wallet.name}-Personal: $symbol •••• • ${wallet.name}-Fund: $symbol ••••"
-                                                } else {
-                                                    "${wallet.name}-Personal: ${AccountingEngine.formatMoney(summary.personalBalance, symbol, includeDecimals = false)} • ${wallet.name}-Fund: ${AccountingEngine.formatMoney(summary.fundBalance, symbol, includeDecimals = false)}"
-                                                },
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.primary
+                                    val rows = buildList {
+                                        add(
+                                            Triple(
+                                                "${wallet.name}-Personal",
+                                                if (isBalanceHidden) "$symbol ••••" else AccountingEngine.formatMoney(summary.personalBalance, symbol, includeDecimals = false),
+                                                MaterialTheme.colorScheme.onSurface
                                             )
-                                            if (selectedSubWalletTab == 2 || summary.fundOfficialSpent > 0.005 || summary.fundBorrowedDue > 0.005) {
-                                                Text(
-                                                    text = if (isBalanceHidden) {
-                                                        "Official Spent: $symbol •••• • Borrowed Due: $symbol ••••"
-                                                    } else {
-                                                        "Official Spent: ${AccountingEngine.formatMoney(summary.fundOfficialSpent, symbol, includeDecimals = false)} • Borrowed Due: ${AccountingEngine.formatMoney(summary.fundBorrowedDue, symbol, includeDecimals = false)}"
-                                                    },
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = if (summary.fundBorrowedDue > 0.005) pocketColors.expenseText else pocketColors.mutedText
+                                        )
+                                        add(
+                                            Triple(
+                                                "${wallet.name}-Fund",
+                                                if (isBalanceHidden) "$symbol ••••" else AccountingEngine.formatMoney(summary.fundBalance, symbol, includeDecimals = false),
+                                                MaterialTheme.colorScheme.primary
+                                            )
+                                        )
+                                        if (summary.fundOfficialSpent > 0.005 || selectedSubWalletTab == 2) {
+                                            add(
+                                                Triple(
+                                                    "Official Spent",
+                                                    if (isBalanceHidden) "$symbol ••••" else AccountingEngine.formatMoney(summary.fundOfficialSpent, symbol, includeDecimals = false),
+                                                    pocketColors.expenseText
                                                 )
-                                            }
+                                            )
                                         }
-                                        if (effectiveDue > 0.005 || selectedSubWalletTab == 2) {
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Button(
-                                                onClick = { showReturnToFundDialog = true },
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                                modifier = Modifier
-                                                    .height(34.dp)
-                                                    .testTag("return_to_fund_button")
+                                    }
+
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        rows.forEach { (label, amountStr, col) ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = null, modifier = Modifier.size(14.dp))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Return to Fund", style = MaterialTheme.typography.labelSmall)
+                                                Text(
+                                                    text = label,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Text(
+                                                    text = amountStr,
+                                                    style = TabularMoneySmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = col
+                                                )
                                             }
                                         }
                                     }
@@ -2520,6 +2440,7 @@ fun WalletDetailScreen(
                         entry = entry,
                         currencySymbol = symbol,
                         runningBalanceAfter = if (isBalanceHidden) null else runningBalAfter,
+                        subWalletViewContext = selectedSubWalletTab,
                         onClick = { selectedEntryForModal = entry }
                     )
                 }
@@ -3165,6 +3086,8 @@ fun CombinedFundDetailScreen(
             entry.tags.contains("FUND_IN", ignoreCase = true) ||
                 entry.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
                 entry.tags.contains("FUND_BORROW", ignoreCase = true) ||
+                entry.tags.contains("FUND_RETURN", ignoreCase = true) ||
+                entry.tags.contains("FUND_TOPUP", ignoreCase = true) ||
                 entry.note.contains("[FUND_TRANSFER]", ignoreCase = true) ||
                 entry.note.contains("[FUND_BORROW]", ignoreCase = true) ||
                 entry.note.contains("[FUND_SETTLE]", ignoreCase = true) ||
@@ -3446,6 +3369,7 @@ fun CombinedFundDetailScreen(
                             entry = entry,
                             currencySymbol = symbol,
                             runningBalanceAfter = null,
+                            subWalletViewContext = 2,
                             onClick = { selectedEntryForModal = entry }
                         )
                     }
@@ -3507,6 +3431,7 @@ fun CombinedFundDetailScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReturnToFundDialog(
     defaultDestFundWallet: WalletBalanceSummary?,
@@ -3545,6 +3470,8 @@ fun ReturnToFundDialog(
         )
     }
     var noteText by remember { mutableStateOf("") }
+    var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
     val amountVal = evaluateMathExpression(amountText) ?: amountText.toDoubleOrNull() ?: 0.0
     val selectedSource = allActiveWallets.firstOrNull { it.wallet.id == sourceWalletId }
     val targetFundChoices = if (fundWallets.isNotEmpty()) fundWallets else allActiveWallets
@@ -3573,6 +3500,49 @@ fun ReturnToFundDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Interactive Date Selector Row
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(0.6.dp, pocketLiquidGlassBorderBrush()),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { showDatePicker = true }
+                        .testTag("return_to_fund_date_button")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarMonth,
+                                contentDescription = "Return Date",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "Date: ${SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(selectedDateMillis))}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Change",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
                 Text(
                     text = "Personal Borrowed Due: ${AccountingEngine.formatMoney(totalBorrowedDue, symbol)}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -3663,24 +3633,70 @@ fun ReturnToFundDialog(
                     if (sourceWalletId != 0L && destFundWalletId != 0L && amountVal > 0.0) {
                         performPocketHaptic(view)
                         val dstName = destSummary?.wallet?.name ?: "Fund"
+                        val srcName = selectedSource?.wallet?.name ?: "Wallet"
                         val cleanUserNote = noteText.trim()
-                        val finalNote = if (cleanUserNote.isNotBlank()) {
-                            "[FUND_RETURN] $cleanUserNote"
+                        val currentDue = totalBorrowedDue
+
+                        val targetDate = selectedDateMillis
+                        if (currentDue > 0.005 && amountVal > currentDue) {
+                            // Auto-split: currentDue as [FUND_RETURN] and excess as [FUND_TOPUP]
+                            val returnPart = AccountingEngine.roundCurrency(currentDue)
+                            val topupPart = AccountingEngine.roundCurrency(amountVal - currentDue)
+
+                            val returnNote = if (cleanUserNote.isNotBlank()) {
+                                "[FUND_RETURN] $cleanUserNote (Due cleared)"
+                            } else {
+                                "[FUND_RETURN] Cleared borrowed due to $dstName Fund"
+                            }
+                            viewModel.saveTransfer(
+                                transfer = TransferEntity(
+                                    sourceWalletId = sourceWalletId,
+                                    destinationWalletId = destFundWalletId,
+                                    principalAmount = returnPart,
+                                    date = targetDate,
+                                    note = returnNote
+                                ),
+                                sourceWalletName = srcName,
+                                destWalletName = dstName,
+                                navigateBackOnSave = false
+                            )
+
+                            val topupNote = if (cleanUserNote.isNotBlank()) {
+                                "[FUND_TOPUP] $cleanUserNote (Excess Top-Up)"
+                            } else {
+                                "[FUND_TOPUP] Extra amount added to $dstName Fund"
+                            }
+                            viewModel.saveTransfer(
+                                transfer = TransferEntity(
+                                    sourceWalletId = sourceWalletId,
+                                    destinationWalletId = destFundWalletId,
+                                    principalAmount = topupPart,
+                                    date = targetDate + 1L,
+                                    note = topupNote
+                                ),
+                                sourceWalletName = srcName,
+                                destWalletName = dstName,
+                                navigateBackOnSave = false
+                            )
                         } else {
-                            "[FUND_RETURN] Returned personal borrow to $dstName Fund"
+                            val finalNote = if (cleanUserNote.isNotBlank()) {
+                                "[FUND_RETURN] $cleanUserNote"
+                            } else {
+                                "[FUND_RETURN] Returned personal borrow to $dstName Fund"
+                            }
+                            viewModel.saveTransfer(
+                                transfer = TransferEntity(
+                                    sourceWalletId = sourceWalletId,
+                                    destinationWalletId = destFundWalletId,
+                                    principalAmount = AccountingEngine.roundCurrency(amountVal),
+                                    date = targetDate,
+                                    note = finalNote
+                                ),
+                                sourceWalletName = srcName,
+                                destWalletName = dstName,
+                                navigateBackOnSave = false
+                            )
                         }
-                        viewModel.saveTransfer(
-                            transfer = TransferEntity(
-                                sourceWalletId = sourceWalletId,
-                                destinationWalletId = destFundWalletId,
-                                principalAmount = AccountingEngine.roundCurrency(amountVal),
-                                date = System.currentTimeMillis(),
-                                note = finalNote
-                            ),
-                            sourceWalletName = selectedSource?.wallet?.name ?: "Wallet",
-                            destWalletName = dstName,
-                            navigateBackOnSave = false
-                        )
                         onDismiss()
                     }
                 },
@@ -3692,6 +3708,36 @@ fun ReturnToFundDialog(
         },
         dismissButton = null
     )
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { pickedUtc ->
+                            val nowCal = Calendar.getInstance().apply { timeInMillis = selectedDateMillis }
+                            val pickedCal = Calendar.getInstance().apply { timeInMillis = pickedUtc }
+                            pickedCal.set(Calendar.HOUR_OF_DAY, nowCal.get(Calendar.HOUR_OF_DAY))
+                            pickedCal.set(Calendar.MINUTE, nowCal.get(Calendar.MINUTE))
+                            selectedDateMillis = pickedCal.timeInMillis
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("Confirm")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
 
 @Composable

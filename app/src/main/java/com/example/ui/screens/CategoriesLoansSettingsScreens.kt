@@ -737,7 +737,7 @@ fun LoansScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(bottom = 40.dp),
+            contentPadding = PaddingValues(bottom = 180.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Unified Receivable vs Payable Overview Card
@@ -2008,6 +2008,11 @@ fun LoansScreen(
                         }
                     }
 
+                    var editingActivity by remember { mutableStateOf<LoanActivityEntity?>(null) }
+                    var editPrincipalText by remember { mutableStateOf("") }
+                    var editInterestText by remember { mutableStateOf("") }
+                    var editNoteText by remember { mutableStateOf("") }
+
                     HorizontalDivider()
                     Text("Activity Ledger (${liveSummary.activities.size})", style = MaterialTheme.typography.labelLarge)
                     liveSummary.activities.forEach { act ->
@@ -2036,14 +2041,97 @@ fun LoansScreen(
                                 }
                             }
                             if (act.activityType != LoanActivityType.DISBURSEMENT.name) {
-                                IconButton(
-                                    onClick = { viewModel.deleteLoanActivity(act.id) },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete activity", modifier = Modifier.size(16.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = {
+                                            editingActivity = act
+                                            editPrincipalText = formatNumericFieldInitialValue(act.principalPortion)
+                                            editInterestText = if (act.interestPortion > 0) formatNumericFieldInitialValue(act.interestPortion) else ""
+                                            editNoteText = cleanActNote
+                                        },
+                                        modifier = Modifier.size(32.dp).testTag("edit_loan_activity_${act.id}")
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Edit activity", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                    IconButton(
+                                        onClick = { viewModel.deleteLoanActivity(act.id) },
+                                        modifier = Modifier.size(32.dp).testTag("delete_loan_activity_${act.id}")
+                                    ) {
+                                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete activity", modifier = Modifier.size(16.dp))
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    editingActivity?.let { targetAct ->
+                        AlertDialog(
+                            onDismissRequest = { editingActivity = null },
+                            title = { Text("Edit ${targetAct.activityType}", fontWeight = FontWeight.Bold) },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    OutlinedTextField(
+                                        value = editPrincipalText,
+                                        onValueChange = { editPrincipalText = sanitizeNumericInput(it) },
+                                        label = { Text("Principal Amount ($loanSymbol)") },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.fillMaxWidth().testTag("edit_loan_activity_principal_input")
+                                    )
+                                    OutlinedTextField(
+                                        value = editInterestText,
+                                        onValueChange = { editInterestText = sanitizeNumericInput(it) },
+                                        label = { Text("Interest Amount ($loanSymbol)") },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = editNoteText,
+                                        onValueChange = { editNoteText = capitalizeFirstLetter(it) },
+                                        label = { Text("Note") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        val newPrin = editPrincipalText.toDoubleOrNull() ?: targetAct.principalPortion
+                                        val newInt = editInterestText.toDoubleOrNull() ?: targetAct.interestPortion
+                                        val cleanN = editNoteText.trim()
+                                        val fundTag = when {
+                                            targetAct.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true) -> "[FUND_LOAN_BORROW]"
+                                            targetAct.note.contains("[FUND_LOAN]", ignoreCase = true) -> "[FUND_LOAN]"
+                                            else -> null
+                                        }
+                                        val finalN = if (fundTag != null) {
+                                            if (cleanN.isNotBlank()) "$fundTag $cleanN" else fundTag
+                                        } else {
+                                            cleanN
+                                        }
+                                        viewModel.recordLoanRepayment(
+                                            loan = liveSummary.loan,
+                                            activity = targetAct.copy(
+                                                principalPortion = AccountingEngine.roundCurrency(newPrin),
+                                                interestPortion = AccountingEngine.roundCurrency(newInt),
+                                                note = finalN
+                                            )
+                                        )
+                                        editingActivity = null
+                                    },
+                                    modifier = Modifier.testTag("save_edited_loan_activity_button")
+                                ) {
+                                    Text("Save")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { editingActivity = null }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        )
                     }
                 }
             },

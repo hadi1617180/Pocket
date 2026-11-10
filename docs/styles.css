@@ -209,6 +209,18 @@ body.theme-light #carbon-fiber-bg {
   filter: url(#pocket-wallet-tint);
 }
 
+.wallet-vec-svg {
+  width: 62%;
+  height: 62%;
+  fill: currentColor;
+  display: block;
+}
+
+.pocket-logo-tinted {
+  object-fit: contain;
+  filter: url(#pocket-wallet-tint);
+}
+
 /* Liquid Bottom Navigation Bar matching LiquidBottomNavigationBar in PocketComponents.kt */
 .liquid-bottom-nav-wrap {
   position: fixed;
@@ -445,7 +457,7 @@ body.theme-light #carbon-fiber-bg {
 .pocket-fab-container {
   position: fixed;
   right: max(18px, calc(50vw - 260px));
-  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   z-index: 45;
   display: flex;
   flex-direction: column;

@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for Savings Goal Sub-Wallet & Borrow integration, Cash Wallet Personal headline & Cash-Total subtitle rule, and systemic bug/loophole fixes across Recurring Bills, Balance Reconciliation, and Savings Goal withdrawal caps.",
-  "updatedAt":  "2026-11-08T16:04:53.627193378Z",
+  "summary":  "Implementation plan for upgrading the Web App (/docs) to 1:1 feature, icon, accounting, UI, and real-time Firestore Cloud Sync parity with the Android App.",
+  "updatedAt":  "2026-11-10T17:38:30.258933521Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

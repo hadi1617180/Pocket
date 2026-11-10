@@ -73,6 +73,25 @@ data class UpgradeModalState(
     val success: String? = null
 )
 
+sealed interface UndoAction {
+    val description: String
+
+    data class CreatedTransaction(val transaction: TransactionEntity, override val description: String) : UndoAction
+    data class UpdatedTransaction(val before: TransactionEntity, val after: TransactionEntity, override val description: String, val beforeFeeAmount: Double = 0.0) : UndoAction
+    data class DeletedTransaction(val transaction: TransactionEntity, override val description: String, val feeAmount: Double = 0.0) : UndoAction
+
+    data class CreatedTransfer(val transfer: TransferEntity, val feeTx: TransactionEntity?, override val description: String) : UndoAction
+    data class UpdatedTransfer(val before: TransferEntity, val after: TransferEntity, override val description: String) : UndoAction
+    data class DeletedTransfer(val transfer: TransferEntity, val feeTx: TransactionEntity?, override val description: String) : UndoAction
+
+    data class CreatedLoanActivity(val activity: LoanActivityEntity, override val description: String) : UndoAction
+    data class UpdatedLoanActivity(val before: LoanActivityEntity, val after: LoanActivityEntity, override val description: String) : UndoAction
+    data class DeletedLoanActivity(val activity: LoanActivityEntity, override val description: String) : UndoAction
+
+    data class CreatedAdjustment(val adjustment: BalanceAdjustmentEntity, override val description: String) : UndoAction
+    data class DeletedAdjustment(val adjustment: BalanceAdjustmentEntity, override val description: String) : UndoAction
+}
+
 data class PocketUiState(
     val isLoading: Boolean = true,
     val hasCompletedOnboarding: Boolean = false,
@@ -114,7 +133,8 @@ data class PocketUiState(
     val upgradePromptReason: String? = null,
     val isRedeemingCode: Boolean = false,
     val activationError: String? = null,
-    val activationSuccess: String? = null
+    val activationSuccess: String? = null,
+    val canUndo: Boolean = false
 ) {
     val isSubscriptionActive: Boolean
         get() = SubscriptionManager.isSubscriptionActive(settings.subscriptionTier, settings.subscriptionExpiresAt)
@@ -144,7 +164,11 @@ data class PocketUiState(
     val fundEnabledSummaries: List<WalletBalanceSummary>
         get() = if (isFundEnabled) {
             activeWalletSummaries.filter {
-                kotlin.math.abs(it.fundBalance) > 0.005 || it.fundBorrowedDue > 0.005 || it.fundOfficialSpent > 0.005
+                kotlin.math.abs(it.fundBalance) > 0.005 ||
+                    it.fundBorrowedDue > 0.005 ||
+                    it.fundOfficialSpent > 0.005 ||
+                    it.fundBorrowedTotal > 0.005 ||
+                    it.fundReturnedTotal > 0.005
             }
         } else emptyList()
 
@@ -155,12 +179,18 @@ data class PocketUiState(
 
     val totalFundCashBalance: Double
         get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(
-            activeWalletSummaries.filter { it.wallet.isFundWallet }.sumOf { it.currentBalance }
+            activeWalletSummaries.filter {
+                it.wallet.isFundWallet &&
+                    (it.wallet.currency.isBlank() || it.wallet.currency.equals("BDT", ignoreCase = true))
+            }.sumOf { it.currentBalance }
         )
 
     val totalFundInOtherWallets: Double
         get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(
-            activeWalletSummaries.filter { !it.wallet.isFundWallet && it.hasVirtualFund }.sumOf { it.fundBalance }
+            activeWalletSummaries.filter {
+                !it.wallet.isFundWallet && it.hasVirtualFund &&
+                    (it.wallet.currency.isBlank() || it.wallet.currency.equals("BDT", ignoreCase = true))
+            }.sumOf { it.fundBalance }
         )
 
     val totalPersonalBalance: Double
@@ -176,17 +206,22 @@ data class PocketUiState(
             it.wallet.currency.isBlank() || it.wallet.currency.equals("BDT", ignoreCase = true)
         }
 
+    private val allBdtWalletSummaries: List<WalletBalanceSummary>
+        get() = walletSummaries.filter {
+            it.wallet.currency.isBlank() || it.wallet.currency.equals("BDT", ignoreCase = true)
+        }
+
     val totalFundBalance: Double
         get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(bdtFundEnabledSummaries.sumOf { it.fundBalance })
 
     val totalFundOfficialSpent: Double
-        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(bdtFundEnabledSummaries.sumOf { it.fundOfficialSpent })
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(allBdtWalletSummaries.sumOf { it.fundOfficialSpent })
 
     val totalFundBorrowedTotal: Double
-        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(bdtFundEnabledSummaries.sumOf { it.fundBorrowedTotal })
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(allBdtWalletSummaries.sumOf { it.fundBorrowedTotal })
 
     val totalFundReturnedTotal: Double
-        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(bdtFundEnabledSummaries.sumOf { it.fundReturnedTotal })
+        get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(allBdtWalletSummaries.sumOf { it.fundReturnedTotal })
 
     val totalFundBorrowedDue: Double
         get() = if (!isFundEnabled) 0.0 else AccountingEngine.roundCurrency(
@@ -281,6 +316,8 @@ class PocketViewModel(
     private val _pendingRecurringPayId = MutableStateFlow<Long?>(null)
     private val _cloudAuthState = MutableStateFlow(CloudAuthUiState())
     private val _upgradeModalState = MutableStateFlow(UpgradeModalState())
+    private val _undoStack = mutableListOf<UndoAction>()
+    private val _canUndo = MutableStateFlow(false)
 
     private var remoteProfileObserverJob: kotlinx.coroutines.Job? = null
     private var debouncedCloudPushJob: kotlinx.coroutines.Job? = null
@@ -1405,9 +1442,9 @@ class PocketViewModel(
             _statusMessage,
             _cloudAuthState,
             _pendingRecurringPayId,
-            _upgradeModalState
-        ) { u, m, c, p, up ->
-            listOf(u, m, c, p, up)
+            combine(_upgradeModalState, _canUndo) { up, cu -> up to cu }
+        ) { u, m, c, p, upCu ->
+            listOf(u, m, c, p, upCu.first, upCu.second)
         },
         _onboardingStage
     ) { acc, navStack, fiveList, onboardingStage ->
@@ -1416,12 +1453,22 @@ class PocketViewModel(
         val cloudAuth = fiveList[2] as CloudAuthUiState
         val pendingRecurringId = fiveList[3] as Long?
         val upgradeModal = fiveList[4] as UpgradeModalState
+        val canUndo = fiveList[5] as Boolean
         val settings = acc.settings
         val db = acc.db
         val effectiveUnlocked = !settings.appLockEnabled || settings.appLockPin.isBlank() || unlocked
 
         val currentScreen = navStack.lastOrNull() ?: PocketScreen.Wallets
-        val bottomTab = when (currentScreen) {
+        // Find the active bottom tab from the nearest tab root in the navigation stack,
+        // preserving the active tab when overlay screens or sub-screens are pushed onto the stack.
+        val tabScreen = navStack.asReversed().firstOrNull { screen ->
+            screen is PocketScreen.Home || screen is PocketScreen.Wallets || screen is PocketScreen.WalletDetail || screen is PocketScreen.BalanceAdjustment ||
+                screen is PocketScreen.TransactionHistory ||
+                screen is PocketScreen.Reports || screen is PocketScreen.MonthlyStatement ||
+                screen is PocketScreen.LoansManagement
+        } ?: currentScreen
+
+        val bottomTab = when (tabScreen) {
             is PocketScreen.Home, is PocketScreen.Wallets, is PocketScreen.WalletDetail, is PocketScreen.BalanceAdjustment -> BottomNavTab.BALANCES
             is PocketScreen.TransactionHistory -> BottomNavTab.RECENT_TRANSACTIONS
             is PocketScreen.Reports, is PocketScreen.MonthlyStatement -> BottomNavTab.REPORTS
@@ -1470,7 +1517,8 @@ class PocketViewModel(
             upgradePromptReason = upgradeModal.reason,
             isRedeemingCode = upgradeModal.isRedeeming,
             activationError = upgradeModal.error,
-            activationSuccess = upgradeModal.success
+            activationSuccess = upgradeModal.success,
+            canUndo = canUndo || acc.ledger.isNotEmpty()
         )
     }
         .stateIn(
@@ -1478,6 +1526,121 @@ class PocketViewModel(
             started = SharingStarted.Eagerly,
             initialValue = PocketUiState()
         )
+
+    // --- Undo Management ---
+    fun pushUndoAction(action: UndoAction) {
+        synchronized(_undoStack) {
+            _undoStack.add(action)
+            if (_undoStack.size > 25) {
+                _undoStack.removeAt(0)
+            }
+        }
+        _canUndo.value = true
+    }
+
+    fun undoLastAction() {
+        val action = synchronized(_undoStack) {
+            _undoStack.removeLastOrNull()
+        }
+        _canUndo.value = synchronized(_undoStack) { _undoStack.isNotEmpty() }
+
+        viewModelScope.launch {
+            if (action != null) {
+                when (action) {
+                    is UndoAction.CreatedTransaction -> {
+                        repository.deleteTransaction(action.transaction.id)
+                    }
+                    is UndoAction.UpdatedTransaction -> {
+                        repository.saveTransactionWithOptionalFee(action.before, serviceFeeAmount = action.beforeFeeAmount)
+                    }
+                    is UndoAction.DeletedTransaction -> {
+                        repository.saveTransactionWithOptionalFee(action.transaction, serviceFeeAmount = action.feeAmount)
+                    }
+                    is UndoAction.CreatedTransfer -> {
+                        repository.deleteTransfer(action.transfer.id)
+                    }
+                    is UndoAction.UpdatedTransfer -> {
+                        val srcName = uiState.value.wallets.firstOrNull { it.id == action.before.sourceWalletId }?.name ?: "Wallet"
+                        val dstName = uiState.value.wallets.firstOrNull { it.id == action.before.destinationWalletId }?.name ?: "Wallet"
+                        repository.saveTransfer(action.before, srcName, dstName)
+                    }
+                    is UndoAction.DeletedTransfer -> {
+                        val srcName = uiState.value.wallets.firstOrNull { it.id == action.transfer.sourceWalletId }?.name ?: "Wallet"
+                        val dstName = uiState.value.wallets.firstOrNull { it.id == action.transfer.destinationWalletId }?.name ?: "Wallet"
+                        repository.saveTransfer(action.transfer, srcName, dstName)
+                        if (action.feeTx != null) {
+                            repository.saveTransactionWithOptionalFee(action.feeTx)
+                        }
+                    }
+                    is UndoAction.CreatedLoanActivity -> {
+                        repository.deleteLoanActivity(action.activity.id)
+                    }
+                    is UndoAction.UpdatedLoanActivity -> {
+                        val loan = uiState.value.loans.firstOrNull { it.id == action.before.loanId }
+                        if (loan != null) {
+                            repository.recordLoanRepayment(loan, action.before)
+                        }
+                    }
+                    is UndoAction.DeletedLoanActivity -> {
+                        val loan = uiState.value.loans.firstOrNull { it.id == action.activity.loanId }
+                        if (loan != null) {
+                            repository.recordLoanRepayment(loan, action.activity)
+                        }
+                    }
+                    is UndoAction.CreatedAdjustment -> {
+                        repository.reverseBalanceAdjustment(action.adjustment)
+                    }
+                    is UndoAction.DeletedAdjustment -> {
+                        repository.reverseBalanceAdjustment(action.adjustment.copy(isReversed = true))
+                    }
+                }
+                _statusMessage.value = "Undone: ${action.description}"
+                notifyWidgetsChanged()
+                scheduleCloudPush()
+            } else {
+                // Database fallback across restarts/updates: find the most recently recorded entry
+                val latestEntry = uiState.value.unifiedLedger
+                    .sortedWith(compareByDescending<UnifiedLedgerEntry> { it.date }.thenByDescending { it.rawId })
+                    .firstOrNull()
+                if (latestEntry == null) {
+                    _statusMessage.value = "Nothing to undo."
+                    return@launch
+                }
+                val absAmt = kotlin.math.abs(latestEntry.signedAmount).toInt()
+                val labelDesc = when (latestEntry.kind) {
+                    LedgerEntryKind.TRANSFER -> "${latestEntry.subtitle.ifBlank { latestEntry.title }} (৳ $absAmt)"
+                    else -> "${latestEntry.title.ifBlank { latestEntry.categoryName ?: "Entry" }} (৳ $absAmt)"
+                }
+                when (latestEntry.kind) {
+                    LedgerEntryKind.INCOME, LedgerEntryKind.EXPENSE, LedgerEntryKind.EXPENSE_REVERSAL -> {
+                        val tx = uiState.value.transactions.firstOrNull { it.id == latestEntry.rawId }
+                        if (tx?.transferId != null) {
+                            repository.deleteTransfer(tx.transferId)
+                        } else if (tx?.loanActivityId != null) {
+                            repository.deleteLoanActivity(tx.loanActivityId)
+                        } else {
+                            repository.deleteTransaction(latestEntry.rawId)
+                        }
+                    }
+                    LedgerEntryKind.TRANSFER -> {
+                        repository.deleteTransfer(latestEntry.rawId)
+                    }
+                    LedgerEntryKind.LOAN_PRINCIPAL -> {
+                        repository.deleteLoanActivity(latestEntry.rawId)
+                    }
+                    LedgerEntryKind.ADJUSTMENT -> {
+                        val adj = uiState.value.adjustments.firstOrNull { it.id == latestEntry.rawId }
+                        if (adj != null) {
+                            repository.reverseBalanceAdjustment(adj)
+                        }
+                    }
+                }
+                _statusMessage.value = "Undone: $labelDesc"
+                notifyWidgetsChanged()
+                scheduleCloudPush()
+            }
+        }
+    }
 
     // --- Navigation ---
     fun navigateTo(screen: PocketScreen) {
@@ -1955,6 +2118,8 @@ class PocketViewModel(
                 return
             }
         }
+        val isExisting = transaction.id != 0L
+        val existingTx = if (isExisting) uiState.value.transactions.firstOrNull { it.id == transaction.id } else null
         viewModelScope.launch {
             val isFundTx = transaction.tags.contains("FUND_BORROW", ignoreCase = true) ||
                 transaction.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
@@ -1965,10 +2130,21 @@ class PocketViewModel(
                     repository.saveWallet(targetW.withVirtualFund(enabled = true, openingFund = targetW.openingFundBalance))
                 }
             }
-            repository.saveTransactionWithOptionalFee(
+            val existingFeeAmount = if (isExisting && existingTx != null) {
+                uiState.value.transactions.filter { it.parentTransactionId == existingTx.id }.sumOf { it.amount }
+            } else 0.0
+            val savedTxId = repository.saveTransactionWithOptionalFee(
                 transaction = transaction,
                 serviceFeeAmount = serviceFeeAmount
             )
+
+            val catLabel = uiState.value.categories.firstOrNull { it.id == transaction.categoryId }?.name ?: "Transaction"
+            val txLabel = transaction.note.trim().ifBlank { catLabel }
+            if (isExisting && existingTx != null) {
+                pushUndoAction(UndoAction.UpdatedTransaction(existingTx, transaction, "Edit: $txLabel (৳ ${transaction.amount.toInt()})", beforeFeeAmount = existingFeeAmount))
+            } else {
+                pushUndoAction(UndoAction.CreatedTransaction(transaction.copy(id = savedTxId), "New: $txLabel (৳ ${transaction.amount.toInt()})"))
+            }
 
             val wName = uiState.value.wallets.firstOrNull { it.id == transaction.walletId }?.name ?: "Wallet"
             if (recurringSetup != null) {
@@ -2182,27 +2358,47 @@ class PocketViewModel(
                 LedgerEntryKind.INCOME, LedgerEntryKind.EXPENSE, LedgerEntryKind.EXPENSE_REVERSAL -> {
                     val tx = uiState.value.transactions.firstOrNull { it.id == entry.rawId }
                     if (tx?.transferId != null) {
+                        val tr = uiState.value.transfers.firstOrNull { it.id == tx.transferId }
+                        if (tr != null) {
+                            pushUndoAction(UndoAction.DeletedTransfer(tr, tx, "Deleted: Transfer (৳ ${tr.principalAmount.toInt()})"))
+                        }
                         repository.deleteTransfer(tx.transferId)
                         _statusMessage.value = "Transfer and associated fee deleted."
                     } else if (tx?.loanActivityId != null) {
+                        val act = uiState.value.loanActivities.firstOrNull { it.id == tx.loanActivityId }
+                        if (act != null) {
+                            pushUndoAction(UndoAction.DeletedLoanActivity(act, "Deleted: Loan activity (৳ ${act.principalPortion.toInt()})"))
+                        }
                         repository.deleteLoanActivity(tx.loanActivityId)
                         _statusMessage.value = "Loan repayment and interest deleted."
-                    } else {
+                    } else if (tx != null) {
+                        val childFeeSum = uiState.value.transactions.filter { it.parentTransactionId == tx.id }.sumOf { it.amount }
+                        val txLabel = tx.note.trim().ifBlank { entry.title.ifBlank { "Transaction" } }
+                        pushUndoAction(UndoAction.DeletedTransaction(tx, "Deleted: $txLabel (৳ ${tx.amount.toInt()})", feeAmount = childFeeSum))
                         repository.deleteTransaction(entry.rawId)
                         _statusMessage.value = "Transaction deleted."
                     }
                 }
                 LedgerEntryKind.TRANSFER -> {
+                    val tr = uiState.value.transfers.firstOrNull { it.id == entry.rawId }
+                    if (tr != null) {
+                        pushUndoAction(UndoAction.DeletedTransfer(tr, null, "Deleted: Transfer (৳ ${tr.principalAmount.toInt()})"))
+                    }
                     repository.deleteTransfer(entry.rawId)
                     _statusMessage.value = "Transfer reversed and deleted."
                 }
                 LedgerEntryKind.LOAN_PRINCIPAL -> {
+                    val act = uiState.value.loanActivities.firstOrNull { it.id == entry.rawId }
+                    if (act != null) {
+                        pushUndoAction(UndoAction.DeletedLoanActivity(act, "Deleted: Loan activity (৳ ${act.principalPortion.toInt()})"))
+                    }
                     repository.deleteLoanActivity(entry.rawId)
                     _statusMessage.value = "Loan activity deleted."
                 }
                 LedgerEntryKind.ADJUSTMENT -> {
                     val adj = uiState.value.adjustments.firstOrNull { it.id == entry.rawId }
                     if (adj != null) {
+                        pushUndoAction(UndoAction.DeletedAdjustment(adj, "Deleted: Balance adjustment (৳ ${kotlin.math.abs(adj.difference).toInt()})"))
                         repository.reverseBalanceAdjustment(adj)
                         _statusMessage.value = "Balance adjustment reversed."
                     }
@@ -2375,7 +2571,20 @@ class PocketViewModel(
                 }
             }
 
-            repository.saveTransfer(transfer, sourceWalletName, destWalletName)
+            val isExisting = transfer.id != 0L
+            val existingTransfer = if (isExisting) uiState.value.transfers.firstOrNull { it.id == transfer.id } else null
+            val savedTransferId = repository.saveTransfer(transfer, sourceWalletName, destWalletName)
+            if (isExisting && existingTransfer != null) {
+                pushUndoAction(UndoAction.UpdatedTransfer(existingTransfer, transfer, "Edit: Transfer (৳ ${transfer.principalAmount.toInt()})"))
+            } else {
+                val actionLabel = when {
+                    isFundReturn -> "Return to Fund (৳ ${transfer.principalAmount.toInt()})"
+                    isFundTopup -> "Fund Top-up (৳ ${transfer.principalAmount.toInt()})"
+                    isFundBorrow -> "Personal Borrow (৳ ${transfer.principalAmount.toInt()})"
+                    else -> "Transfer (৳ ${transfer.principalAmount.toInt()})"
+                }
+                pushUndoAction(UndoAction.CreatedTransfer(transfer.copy(id = savedTransferId), null, actionLabel))
+            }
             _statusMessage.value = when {
                 isFundTransfer -> "Transferred Fund from '$sourceWalletName' to '$destWalletName'."
                 isFundReturn -> "Returned borrowed money to '$destWalletName' Fund."
@@ -2435,6 +2644,9 @@ class PocketViewModel(
     }
 
     fun recordLoanRepayment(loan: LoanEntity, activity: LoanActivityEntity) {
+        val existingActivity = if (activity.id != 0L) {
+            uiState.value.loanActivities.firstOrNull { it.id == activity.id }
+        } else null
         viewModelScope.launch {
             val isFundRepayment = activity.note.contains("[FUND_LOAN]", ignoreCase = true) ||
                 activity.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
@@ -2444,14 +2656,40 @@ class PocketViewModel(
                     repository.saveWallet(targetW.withVirtualFund(enabled = true, openingFund = targetW.openingFundBalance))
                 }
             }
-            repository.recordLoanRepayment(loan, activity)
-            _statusMessage.value = "Repayment recorded."
+            val savedActivityId = repository.recordLoanRepayment(loan, activity)
+            val amtInt = (activity.principalPortion + activity.interestPortion).toInt()
+            if (existingActivity != null) {
+                pushUndoAction(
+                    UndoAction.UpdatedLoanActivity(
+                        before = existingActivity,
+                        after = activity,
+                        description = "Edit: Loan entry for ${loan.personName} (৳ $amtInt)"
+                    )
+                )
+            } else {
+                pushUndoAction(
+                    UndoAction.CreatedLoanActivity(
+                        activity = activity.copy(id = savedActivityId),
+                        description = "New: Loan entry for ${loan.personName} (৳ $amtInt)"
+                    )
+                )
+            }
+            _statusMessage.value = if (activity.id == 0L) "Repayment recorded." else "Repayment updated."
             notifyWidgetsChanged()
         }
     }
 
     fun deleteLoanActivity(activityId: Long) {
+        val existingActivity = uiState.value.loanActivities.firstOrNull { it.id == activityId }
         viewModelScope.launch {
+            if (existingActivity != null) {
+                pushUndoAction(
+                    UndoAction.DeletedLoanActivity(
+                        activity = existingActivity,
+                        description = "Deleted: Loan activity (৳ ${existingActivity.principalPortion.toInt()})"
+                    )
+                )
+            }
             repository.deleteLoanActivity(activityId)
             _statusMessage.value = "Loan entry removed."
             notifyWidgetsChanged()
@@ -2478,15 +2716,21 @@ class PocketViewModel(
     ) {
         viewModelScope.launch {
             val diff = AccountingEngine.roundCurrency(actualBalance - calculatedBalanceBefore)
-            repository.createBalanceAdjustment(
-                BalanceAdjustmentEntity(
-                    walletId = walletId,
-                    actualBalance = AccountingEngine.roundCurrency(actualBalance),
-                    calculatedBalanceBefore = AccountingEngine.roundCurrency(calculatedBalanceBefore),
-                    difference = diff,
-                    date = date,
-                    reason = reason,
-                    note = note
+            val adjEntity = BalanceAdjustmentEntity(
+                walletId = walletId,
+                actualBalance = AccountingEngine.roundCurrency(actualBalance),
+                calculatedBalanceBefore = AccountingEngine.roundCurrency(calculatedBalanceBefore),
+                difference = diff,
+                date = date,
+                reason = reason,
+                note = note
+            )
+            val savedAdjId = repository.createBalanceAdjustment(adjEntity)
+            val wName = uiState.value.wallets.firstOrNull { it.id == walletId }?.name ?: "Wallet"
+            pushUndoAction(
+                UndoAction.CreatedAdjustment(
+                    adjustment = adjEntity.copy(id = savedAdjId),
+                    description = "Adjust: $wName (${if (diff >= 0) "+" else ""}৳ ${diff.toInt()})"
                 )
             )
             _statusMessage.value = "Balance reconciled (${if (diff >= 0) "+" else ""}$diff)."
@@ -2522,15 +2766,20 @@ class PocketViewModel(
                     note.contains("-Fund", ignoreCase = true) -> note
                     else -> "${existingWallet.name}-Fund: $note"
                 }
-                repository.createBalanceAdjustment(
-                    BalanceAdjustmentEntity(
-                        walletId = walletId,
-                        actualBalance = newTotalActual,
-                        calculatedBalanceBefore = summary.currentBalance,
-                        difference = diff,
-                        date = date,
-                        reason = reason,
-                        note = finalFundNote
+                val adjEntity = BalanceAdjustmentEntity(
+                    walletId = walletId,
+                    actualBalance = newTotalActual,
+                    calculatedBalanceBefore = summary.currentBalance,
+                    difference = diff,
+                    date = date,
+                    reason = reason,
+                    note = finalFundNote
+                )
+                val savedAdjId = repository.createBalanceAdjustment(adjEntity)
+                pushUndoAction(
+                    UndoAction.CreatedAdjustment(
+                        adjustment = adjEntity.copy(id = savedAdjId),
+                        description = "Adjust: ${existingWallet.name}-Fund (${if (diff >= 0) "+" else ""}৳ ${diff.toInt()})"
                     )
                 )
                 _statusMessage.value = "${existingWallet.name}-Fund balance reconciled (${if (diff >= 0) "+" else ""}$diff)."
@@ -2542,15 +2791,20 @@ class PocketViewModel(
                     note.contains("-Personal", ignoreCase = true) -> note
                     else -> "${existingWallet.name}-Personal: $note"
                 }
-                repository.createBalanceAdjustment(
-                    BalanceAdjustmentEntity(
-                        walletId = walletId,
-                        actualBalance = newTotalActual,
-                        calculatedBalanceBefore = summary.currentBalance,
-                        difference = diff,
-                        date = date,
-                        reason = reason,
-                        note = finalPersonalNote
+                val adjEntity = BalanceAdjustmentEntity(
+                    walletId = walletId,
+                    actualBalance = newTotalActual,
+                    calculatedBalanceBefore = summary.currentBalance,
+                    difference = diff,
+                    date = date,
+                    reason = reason,
+                    note = finalPersonalNote
+                )
+                val savedAdjId = repository.createBalanceAdjustment(adjEntity)
+                pushUndoAction(
+                    UndoAction.CreatedAdjustment(
+                        adjustment = adjEntity.copy(id = savedAdjId),
+                        description = "Adjust: ${existingWallet.name}-Personal (${if (diff >= 0) "+" else ""}৳ ${diff.toInt()})"
                     )
                 )
                 _statusMessage.value = "${existingWallet.name}-Personal balance reconciled (${if (diff >= 0) "+" else ""}$diff)."

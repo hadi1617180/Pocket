@@ -1848,6 +1848,8 @@ fun LedgerEntryRowCard(
     entry: UnifiedLedgerEntry,
     currencySymbol: String,
     runningBalanceAfter: Double? = null,
+    subWalletViewContext: Int = 0, // 0 = All/Neutral, 1 = Personal View, 2 = Fund View
+    showDateInSubtitle: Boolean = true,
     isSelected: Boolean = false,
     selectionMode: Boolean = false,
     onLongClick: (() -> Unit)? = null,
@@ -1855,11 +1857,28 @@ fun LedgerEntryRowCard(
 ) {
     val pocketColors = LocalPocketColors.current
     val view = LocalView.current
+    val isFundReturnOrTopup = entry.tags.contains("FUND_RETURN", ignoreCase = true) ||
+        entry.tags.contains("FUND_TOPUP", ignoreCase = true) ||
+        entry.note.contains("[FUND_RETURN]", ignoreCase = true) ||
+        entry.note.contains("[FUND_TOPUP]", ignoreCase = true)
+    val isFundBorrowOrSettle = entry.tags.contains("FUND_BORROW", ignoreCase = true) ||
+        entry.tags.contains("FUND_SETTLE", ignoreCase = true) ||
+        entry.note.contains("[FUND_BORROW]", ignoreCase = true) ||
+        entry.note.contains("[FUND_SETTLE]", ignoreCase = true)
+
     val (amountColor, signPrefix) = when (entry.kind) {
         LedgerEntryKind.INCOME -> pocketColors.incomeText to "+"
         LedgerEntryKind.EXPENSE_REVERSAL -> pocketColors.incomeText to "+"
         LedgerEntryKind.EXPENSE -> pocketColors.expenseText to "−"
-        LedgerEntryKind.TRANSFER -> pocketColors.transferText to "⇄ "
+        LedgerEntryKind.TRANSFER -> {
+            when {
+                subWalletViewContext == 1 && isFundReturnOrTopup -> pocketColors.expenseText to "−"
+                subWalletViewContext == 1 && isFundBorrowOrSettle -> pocketColors.incomeText to "+"
+                subWalletViewContext == 2 && isFundReturnOrTopup -> pocketColors.incomeText to "+"
+                subWalletViewContext == 2 && isFundBorrowOrSettle -> pocketColors.expenseText to "−"
+                else -> pocketColors.transferText to "⇄ "
+            }
+        }
         LedgerEntryKind.LOAN_PRINCIPAL -> {
             if (entry.signedAmount >= 0) pocketColors.loanText to "+" else pocketColors.loanText to "−"
         }
@@ -1869,7 +1888,7 @@ fun LedgerEntryRowCard(
     }
 
     val currentLang = com.example.data.LocalAppLanguage.current
-    val formattedAmount = remember(entry.signedAmount, currencySymbol, entry.kind, currentLang) {
+    val formattedAmount = remember(entry.signedAmount, currencySymbol, entry.kind, signPrefix, currentLang) {
         com.example.data.PocketLocalizer.currentLanguage = currentLang
         val absText = AccountingEngine.formatMoney(
             kotlin.math.abs(entry.signedAmount),
@@ -1882,6 +1901,17 @@ fun LedgerEntryRowCard(
     val dateLabel = remember(entry.date, currentLang) {
         com.example.data.PocketLocalizer.currentLanguage = currentLang
         formatRelativeDate(entry.date)
+    }
+
+    val routeText = remember(entry.kind, entry.walletName, entry.secondaryWalletName, entry.subtitle, isFundReturnOrTopup, isFundBorrowOrSettle) {
+        val dst = entry.secondaryWalletName ?: entry.walletName
+        when {
+            entry.kind == LedgerEntryKind.TRANSFER && isFundReturnOrTopup -> "${entry.walletName}-Personal → $dst-Fund"
+            entry.kind == LedgerEntryKind.TRANSFER && isFundBorrowOrSettle -> "${entry.walletName}-Fund → $dst-Personal"
+            entry.kind == LedgerEntryKind.TRANSFER && entry.note.contains("[FUND_TRANSFER]", ignoreCase = true) -> "${entry.walletName}-Fund → $dst-Fund"
+            entry.secondaryWalletName != null -> "${entry.walletName} → ${entry.secondaryWalletName}"
+            else -> entry.walletName
+        }
     }
 
     val glassBorderBrush = pocketLiquidGlassBorderBrush(isHighlighted = isSelected)
@@ -1973,13 +2003,38 @@ fun LedgerEntryRowCard(
                     }
                 }
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "${entry.walletName}${if (entry.secondaryWalletName != null) " → ${entry.secondaryWalletName}" else ""} · $dateLabel",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = pocketColors.mutedText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (!showDateInSubtitle) {
+                    Text(
+                        text = routeText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = pocketColors.mutedText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else if (routeText.contains("→")) {
+                    Text(
+                        text = routeText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = pocketColors.mutedText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = dateLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = pocketColors.mutedText.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    Text(
+                        text = "$routeText · $dateLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = pocketColors.mutedText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Spacer(modifier = Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.End) {
@@ -2434,81 +2489,7 @@ fun sanitizeMathExpressionInput(raw: String): String {
  * Returns null if the expression is empty or invalid.
  */
 fun evaluateMathExpression(raw: String): Double? {
-    val cleaned = com.example.data.PocketLocalizer.normalizeToAsciiDigits(raw)
-        .replace(" ", "")
-        .replace('×', '*')
-        .replace('÷', '/')
-        .replace('−', '-')
-        .trimEnd('+', '-', '*', '/', '.')
-    if (cleaned.isEmpty()) return null
-    cleaned.toDoubleOrNull()?.let { return if (it.isFinite()) AccountingEngine.roundCurrency(it) else null }
-
-    return runCatching {
-        val tokens = mutableListOf<String>()
-        var i = 0
-        while (i < cleaned.length) {
-            val ch = cleaned[i]
-            if (ch == '+' || ch == '-' || ch == '*' || ch == '/') {
-                if ((ch == '+' || ch == '-') && (tokens.isEmpty() || tokens.last() in listOf("+", "-", "*", "/"))) {
-                    val sb = StringBuilder().append(ch)
-                    i++
-                    while (i < cleaned.length && (cleaned[i].isDigit() || cleaned[i] == '.')) {
-                        sb.append(cleaned[i])
-                        i++
-                    }
-                    if (sb.length > 1) tokens.add(sb.toString())
-                } else {
-                    tokens.add(ch.toString())
-                    i++
-                }
-            } else if (ch.isDigit() || ch == '.') {
-                val sb = StringBuilder()
-                while (i < cleaned.length && (cleaned[i].isDigit() || cleaned[i] == '.')) {
-                    sb.append(cleaned[i])
-                    i++
-                }
-                tokens.add(sb.toString())
-            } else {
-                i++
-            }
-        }
-        if (tokens.isEmpty()) return@runCatching null
-
-        // Pass 1: * and /
-        val pass1 = mutableListOf<String>()
-        var idx = 0
-        while (idx < tokens.size) {
-            val tk = tokens[idx]
-            if ((tk == "*" || tk == "/") && pass1.isNotEmpty() && idx + 1 < tokens.size) {
-                val left = pass1.removeAt(pass1.lastIndex).toDoubleOrNull() ?: return@runCatching null
-                val right = tokens[idx + 1].toDoubleOrNull() ?: return@runCatching null
-                val res = if (tk == "*") left * right else {
-                    if (abs(right) < 1e-12) return@runCatching null
-                    left / right
-                }
-                pass1.add(res.toString())
-                idx += 2
-            } else {
-                pass1.add(tk)
-                idx++
-            }
-        }
-
-        // Pass 2: + and -
-        var acc = pass1.firstOrNull()?.toDoubleOrNull() ?: return@runCatching null
-        idx = 1
-        while (idx + 1 < pass1.size) {
-            val op = pass1[idx]
-            val rhs = pass1[idx + 1].toDoubleOrNull() ?: return@runCatching null
-            acc = when (op) {
-                "+" -> acc + rhs
-                "-" -> acc - rhs
-                else -> return@runCatching null
-            }
-            idx += 2
-        }
-        if (acc.isFinite()) AccountingEngine.roundCurrency(acc) else null
-    }.getOrNull()
+    return AccountingEngine.evaluateMathExpression(raw)
 }
 
 fun hasMathOperators(raw: String): Boolean {

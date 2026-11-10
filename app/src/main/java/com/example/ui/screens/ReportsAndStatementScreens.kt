@@ -292,7 +292,7 @@ fun ReportsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(bottom = 88.dp),
+            contentPadding = PaddingValues(bottom = 180.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Currency Pill Selector (shown whenever foreign-currency wallets exist - Item 5)

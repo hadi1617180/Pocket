@@ -9,10 +9,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
@@ -2369,7 +2372,8 @@ fun TransactionHistoryScreen(
     viewModel: PocketViewModel,
     initialTypeFilter: LedgerEntryKind?,
     initialCategoryId: Long?,
-    initialWalletId: Long?
+    initialWalletId: Long?,
+    listState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
 ) {
     var searchQuery by remember { mutableStateOf("") }
     // Automatically sync to THIS_MONTH (Selected Month) when drilling down from Report or Home monthly totals (Item 5)
@@ -2498,6 +2502,8 @@ fun TransactionHistoryScreen(
             val isFundRelated = e.tags.contains("FUND_IN", ignoreCase = true) ||
                 e.tags.contains("FUND_EXPENSE", ignoreCase = true) ||
                 e.tags.contains("FUND_BORROW", ignoreCase = true) ||
+                e.tags.contains("FUND_RETURN", ignoreCase = true) ||
+                e.tags.contains("FUND_TOPUP", ignoreCase = true) ||
                 e.note.contains("[FUND_TRANSFER]", ignoreCase = true) ||
                 e.note.contains("[FUND_BORROW]", ignoreCase = true) ||
                 e.note.contains("[FUND_RETURN]", ignoreCase = true) ||
@@ -2507,6 +2513,8 @@ fun TransactionHistoryScreen(
                 e.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true) ||
                 e.note.contains("-Fund", ignoreCase = true)
             val isBorrowRelated = e.tags.contains("FUND_BORROW", ignoreCase = true) ||
+                e.tags.contains("FUND_RETURN", ignoreCase = true) ||
+                e.tags.contains("FUND_TOPUP", ignoreCase = true) ||
                 e.note.contains("[FUND_BORROW]", ignoreCase = true) ||
                 e.note.contains("[FUND_RETURN]", ignoreCase = true) ||
                 e.note.contains("[FUND_SETTLE]", ignoreCase = true) ||
@@ -2664,10 +2672,11 @@ fun TransactionHistoryScreen(
         }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(bottom = 88.dp),
+            contentPadding = PaddingValues(bottom = 180.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Minimal Search + Filter Row (Item 6)
@@ -3025,9 +3034,16 @@ fun TransactionHistoryScreen(
                         val entryWalletCurrency = uiState.wallets.firstOrNull { it.id == entry.walletId }?.currency ?: "BDT"
                         val entrySymbol = AccountingEngine.currencySymbolForCode(entryWalletCurrency)
                         val isSelected = selectedEntryKeys.contains(entry.uniqueKey)
+                        val historySubWalletContext = when (subWalletHistoryFilter) {
+                            "PERSONAL" -> 1
+                            "FUND" -> 2
+                            else -> 0
+                        }
                         LedgerEntryRowCard(
                             entry = entry,
                             currencySymbol = entrySymbol,
+                            subWalletViewContext = historySubWalletContext,
+                            showDateInSubtitle = false,
                             isSelected = isSelected,
                             selectionMode = selectedEntryKeys.isNotEmpty(),
                             onClick = {

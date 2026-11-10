@@ -242,7 +242,81 @@ object AccountingEngine {
     }
 
     fun evaluateMathExpression(raw: String): Double? {
-        return com.example.ui.components.evaluateMathExpression(raw)
+        val cleaned = PocketLocalizer.normalizeToAsciiDigits(raw)
+            .replace(" ", "")
+            .replace('×', '*')
+            .replace('÷', '/')
+            .replace('−', '-')
+            .trimEnd('+', '-', '*', '/', '.')
+        if (cleaned.isEmpty()) return null
+        cleaned.toDoubleOrNull()?.let { return if (it.isFinite()) roundCurrency(it) else null }
+
+        return runCatching {
+            val tokens = mutableListOf<String>()
+            var i = 0
+            while (i < cleaned.length) {
+                val ch = cleaned[i]
+                if (ch == '+' || ch == '-' || ch == '*' || ch == '/') {
+                    if ((ch == '+' || ch == '-') && (tokens.isEmpty() || tokens.last() in listOf("+", "-", "*", "/"))) {
+                        val sb = StringBuilder().append(ch)
+                        i++
+                        while (i < cleaned.length && (cleaned[i].isDigit() || cleaned[i] == '.')) {
+                            sb.append(cleaned[i])
+                            i++
+                        }
+                        if (sb.length > 1) tokens.add(sb.toString())
+                    } else {
+                        tokens.add(ch.toString())
+                        i++
+                    }
+                } else if (ch.isDigit() || ch == '.') {
+                    val sb = StringBuilder()
+                    while (i < cleaned.length && (cleaned[i].isDigit() || cleaned[i] == '.')) {
+                        sb.append(cleaned[i])
+                        i++
+                    }
+                    tokens.add(sb.toString())
+                } else {
+                    i++
+                }
+            }
+            if (tokens.isEmpty()) return@runCatching null
+
+            // Pass 1: * and /
+            val pass1 = mutableListOf<String>()
+            var idx = 0
+            while (idx < tokens.size) {
+                val tk = tokens[idx]
+                if ((tk == "*" || tk == "/") && pass1.isNotEmpty() && idx + 1 < tokens.size) {
+                    val left = pass1.removeAt(pass1.lastIndex).toDoubleOrNull() ?: return@runCatching null
+                    val right = tokens[idx + 1].toDoubleOrNull() ?: return@runCatching null
+                    val res = if (tk == "*") left * right else {
+                        if (abs(right) < 1e-12) return@runCatching null
+                        left / right
+                    }
+                    pass1.add(res.toString())
+                    idx += 2
+                } else {
+                    pass1.add(tk)
+                    idx++
+                }
+            }
+
+            // Pass 2: + and -
+            var acc = pass1.firstOrNull()?.toDoubleOrNull() ?: return@runCatching null
+            idx = 1
+            while (idx + 1 < pass1.size) {
+                val op = pass1[idx]
+                val rhs = pass1[idx + 1].toDoubleOrNull() ?: return@runCatching null
+                acc = when (op) {
+                    "+" -> acc + rhs
+                    "-" -> acc - rhs
+                    else -> return@runCatching null
+                }
+                idx += 2
+            }
+            if (acc.isFinite()) roundCurrency(acc) else null
+        }.getOrNull()
     }
 
     fun calculateTransferFee(
@@ -688,7 +762,13 @@ object AccountingEngine {
             val srcWallet = walletMap[tr.sourceWalletId]
             val dstWallet = walletMap[tr.destinationWalletId]
             val isSameWalletInternal = tr.sourceWalletId == tr.destinationWalletId
-            if (!fundFeatureEnabled && (isSameWalletInternal || srcWallet?.isFundWallet == true || dstWallet?.isFundWallet == true)) {
+            val isFundTransfer = tr.note.contains("[FUND_TRANSFER]", ignoreCase = true)
+            val isFundBorrowTransfer = tr.note.contains("[FUND_BORROW]", ignoreCase = true)
+            val isFundSettleTransfer = tr.note.contains("[FUND_SETTLE]", ignoreCase = true)
+            val isFundReturnTransfer = tr.note.contains("[FUND_RETURN]", ignoreCase = true)
+            val isFundTopupTransfer = tr.note.contains("[FUND_TOPUP]", ignoreCase = true)
+            val hasExplicitFundTag = isFundTransfer || isFundBorrowTransfer || isFundSettleTransfer || isFundReturnTransfer || isFundTopupTransfer
+            if (!fundFeatureEnabled && !hasExplicitFundTag && (isSameWalletInternal || srcWallet?.isFundWallet == true || dstWallet?.isFundWallet == true)) {
                 return@forEach
             }
             val srcName = srcWallet?.name ?: "Source"
@@ -697,11 +777,6 @@ object AccountingEngine {
             val dstCurr = dstWallet?.currency ?: "BDT"
             val isCrossCurrency = !srcCurr.equals(dstCurr, ignoreCase = true) && tr.destinationAmount > 0.0
             val dstSym = currencySymbolForCode(dstCurr)
-            val isFundTransfer = fundFeatureEnabled && tr.note.contains("[FUND_TRANSFER]", ignoreCase = true)
-            val isFundBorrowTransfer = fundFeatureEnabled && tr.note.contains("[FUND_BORROW]", ignoreCase = true)
-            val isFundSettleTransfer = fundFeatureEnabled && tr.note.contains("[FUND_SETTLE]", ignoreCase = true)
-            val isFundReturnTransfer = fundFeatureEnabled && tr.note.contains("[FUND_RETURN]", ignoreCase = true)
-            val isFundTopupTransfer = fundFeatureEnabled && tr.note.contains("[FUND_TOPUP]", ignoreCase = true)
             val cleanTransferNote = tr.note
                 .replace("[FUND_TRANSFER]", "", ignoreCase = true)
                 .replace("[FUND_BORROW]", "", ignoreCase = true)
@@ -735,6 +810,26 @@ object AccountingEngine {
                 isFundTransfer -> "$srcName-Fund → $dstName-Fund"
                 else -> "$srcName → $dstName"
             }
+            val transferIcon = when {
+                isFundReturnTransfer -> "KEYBOARD_RETURN"
+                isFundTopupTransfer -> "ADD_CIRCLE"
+                isFundBorrowTransfer -> "PAYMENTS"
+                else -> "SWAP_HORIZ"
+            }
+            val transferColor = when {
+                isFundReturnTransfer -> "#15803D"
+                isFundTopupTransfer -> "#0D9488"
+                isFundBorrowTransfer -> "#DC2626"
+                else -> "#1D4ED8"
+            }
+            val transferTags = when {
+                isFundReturnTransfer -> "FUND_RETURN"
+                isFundTopupTransfer -> "FUND_TOPUP"
+                isFundBorrowTransfer -> "FUND_BORROW"
+                isFundSettleTransfer -> "FUND_SETTLE"
+                isFundTransfer -> "FUND_TRANSFER"
+                else -> ""
+            }
             result.add(
                 UnifiedLedgerEntry(
                     uniqueKey = "TR_${tr.id}",
@@ -748,11 +843,12 @@ object AccountingEngine {
                     secondaryWalletId = tr.destinationWalletId,
                     secondaryWalletName = dstName,
                     categoryName = "Transfer",
-                    iconName = "SWAP_HORIZ",
-                    colorHex = "#1D4ED8",
+                    iconName = transferIcon,
+                    colorHex = transferColor,
                     signedAmount = roundCurrency(tr.principalAmount),
                     feeAmount = roundCurrency(tr.feeAmount),
                     note = tr.note,
+                    tags = transferTags,
                     badgeText = transferBadge
                 )
             )

@@ -32,10 +32,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -57,11 +69,35 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.Handshake
+import androidx.compose.material.icons.filled.RemoveCircleOutline
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.testTag
+import com.example.data.TransactionType
 import com.example.ui.BottomNavTab
 import com.example.ui.PocketScreen
 import com.example.ui.PocketViewModel
 import com.example.ui.components.LiquidBottomNavigationBar
 import com.example.ui.screens.*
+import com.example.ui.theme.LocalPocketColors
 import com.example.ui.theme.PocketTheme
 import com.example.widget.PocketWidgetUpdater
 
@@ -236,6 +272,7 @@ class MainActivity : FragmentActivity() {
 fun PocketApp(viewModel: PocketViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val historyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
 
     LaunchedEffect(uiState.statusMessage) {
         uiState.statusMessage?.let { msg ->
@@ -375,21 +412,44 @@ fun PocketApp(viewModel: PocketViewModel) {
         }
 
         // Sync finger swipe on the horizontal pager into ViewModel as soon as targetPage or settledPage updates
-        LaunchedEffect(mainTabPagerState) {
+        LaunchedEffect(mainTabPagerState, isTopLevelScreen) {
             snapshotFlow { mainTabPagerState.settledPage }
                 .collect { settledPage ->
+                    if (!isTopLevelScreen) return@collect
                     val targetTab = topLevelTabs.getOrNull(settledPage) ?: return@collect
-                    viewModel.switchBottomTab(targetTab)
+                    if (targetTab != uiState.activeBottomTab) {
+                        viewModel.switchBottomTab(targetTab)
+                    }
                 }
         }
+
+        var isGlobalFabExpanded by remember { mutableStateOf(false) }
+        LaunchedEffect(uiState.currentScreen, mainTabPagerState.currentPage) {
+            isGlobalFabExpanded = false
+        }
+        val globalFabBlur by animateDpAsState(
+            targetValue = if (isGlobalFabExpanded && isTopLevelScreen) 12.dp else 0.dp,
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            label = "global_fab_blur"
+        )
+        val globalFabRotation by animateFloatAsState(
+            targetValue = if (isGlobalFabExpanded) 45f else 0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            ),
+            label = "global_fab_rotation"
+        )
 
         val isOverlayPopupScreen = uiState.currentScreen is PocketScreen.TransactionForm ||
             uiState.currentScreen is PocketScreen.TransferForm ||
             uiState.currentScreen is PocketScreen.BalanceAdjustment
 
         // Mandatory BackHandler for custom state-based navigation
-        BackHandler(enabled = !isTopLevelScreen || mainTabPagerState.currentPage != 0) {
-            if (isTopLevelScreen && mainTabPagerState.currentPage != 0) {
+        BackHandler(enabled = isGlobalFabExpanded || !isTopLevelScreen || mainTabPagerState.currentPage != 0) {
+            if (isGlobalFabExpanded) {
+                isGlobalFabExpanded = false
+            } else if (isTopLevelScreen && mainTabPagerState.currentPage != 0) {
                 coroutineScope.launch {
                     mainTabPagerState.animateScrollToPage(
                         page = 0,
@@ -405,7 +465,56 @@ fun PocketApp(viewModel: PocketViewModel) {
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.safeDrawing,
-            snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+            snackbarHost = {
+                val bottomDockOffset = if (isTopLevelScreen) 96.dp else 16.dp
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = bottomDockOffset)
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    SnackbarHost(
+                        hostState = snackbarHostState,
+                        snackbar = { data ->
+                            SwipeToDismissBox(
+                                state = rememberSwipeToDismissBoxState(
+                                    confirmValueChange = { value ->
+                                        if (value != SwipeToDismissBoxValue.Settled) {
+                                            data.dismiss()
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                ),
+                                backgroundContent = {}
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.inverseSurface,
+                                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                                    shadowElevation = 8.dp,
+                                    border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = data.visuals.message,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.inverseOnSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
+            }
         ) { innerPadding ->
             Box(
                 modifier = Modifier
@@ -430,7 +539,8 @@ fun PocketApp(viewModel: PocketViewModel) {
                                 viewModel = viewModel,
                                 initialTypeFilter = null,
                                 initialCategoryId = null,
-                                initialWalletId = null
+                                initialWalletId = null,
+                                listState = historyListState
                             )
                             BottomNavTab.REPORTS -> ReportsScreen(
                                 uiState = uiState,
@@ -452,7 +562,9 @@ fun PocketApp(viewModel: PocketViewModel) {
                 if (isTopLevelScreen) {
                     HorizontalPager(
                         state = mainTabPagerState,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .blur(globalFabBlur)
                     ) { pageIndex ->
                         when (pageIndex) {
                             0 -> WalletsOverviewScreen(
@@ -464,7 +576,8 @@ fun PocketApp(viewModel: PocketViewModel) {
                                 viewModel = viewModel,
                                 initialTypeFilter = null,
                                 initialCategoryId = null,
-                                initialWalletId = null
+                                initialWalletId = null,
+                                listState = historyListState
                             )
                             2 -> ReportsScreen(
                                 uiState = uiState,
@@ -539,7 +652,8 @@ fun PocketApp(viewModel: PocketViewModel) {
                             viewModel = viewModel,
                             initialTypeFilter = screen.initialTypeFilter,
                             initialCategoryId = screen.initialCategoryId,
-                            initialWalletId = screen.initialWalletId
+                            initialWalletId = screen.initialWalletId,
+                            listState = historyListState
                         )
                         is PocketScreen.MonthlyStatement -> MonthlyStatementScreen(
                             uiState = uiState,
@@ -613,6 +727,7 @@ fun PocketApp(viewModel: PocketViewModel) {
                 }
 
                 if (isTopLevelScreen) {
+                    val pocketColors = LocalPocketColors.current
                     // Soft gradient overlay from screen bottom up to FAB level (~160dp)
                     // softly dimming and fading background scrolling text behind the liquid glass dock
                     val isLight = uiState.settings.themeMode.equals("LIGHT", ignoreCase = true)
@@ -633,12 +748,133 @@ fun PocketApp(viewModel: PocketViewModel) {
                             )
                     )
 
+                    // Scrim when global FAB speed-dial is expanded on any of the 4 main tabs
+                    AnimatedVisibility(
+                        visible = isGlobalFabExpanded,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.25f))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    isGlobalFabExpanded = false
+                                }
+                        )
+                    }
+
+                    // Global upward-expanding Liquid FAB Menu + FloatingActionButton (+) at exact same position across all 4 tabs
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 18.dp, bottom = 104.dp),
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        AnimatedVisibility(
+                            visible = isGlobalFabExpanded,
+                            enter = slideInVertically(
+                                initialOffsetY = { it / 2 },
+                                animationSpec = spring(
+                                    dampingRatio = 0.62f,
+                                    stiffness = 300f
+                                )
+                            ) + scaleIn(
+                                initialScale = 0.75f,
+                                animationSpec = spring(
+                                    dampingRatio = 0.62f,
+                                    stiffness = 300f
+                                )
+                            ) + fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
+                            exit = slideOutVertically(
+                                targetOffsetY = { it / 2 },
+                                animationSpec = spring(stiffness = Spring.StiffnessMedium)
+                            ) + scaleOut(
+                                targetScale = 0.8f,
+                                animationSpec = spring(stiffness = Spring.StiffnessMedium)
+                            ) + fadeOut()
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                LiquidFabActionItem(
+                                    icon = Icons.Default.AddCircleOutline,
+                                    label = "Income",
+                                    accentColor = pocketColors.incomeText,
+                                    containerColor = pocketColors.overlayIncomeContainer,
+                                    testTag = "quick_action_income",
+                                    onClick = {
+                                        isGlobalFabExpanded = false
+                                        viewModel.navigateTo(PocketScreen.TransactionForm(initialType = TransactionType.INCOME))
+                                    }
+                                )
+                                LiquidFabActionItem(
+                                    icon = Icons.Default.RemoveCircleOutline,
+                                    label = "Expense",
+                                    accentColor = pocketColors.expenseText,
+                                    containerColor = pocketColors.overlayExpenseContainer,
+                                    testTag = "quick_action_expense",
+                                    onClick = {
+                                        isGlobalFabExpanded = false
+                                        viewModel.navigateTo(PocketScreen.TransactionForm(initialType = TransactionType.EXPENSE))
+                                    }
+                                )
+                                LiquidFabActionItem(
+                                    icon = Icons.AutoMirrored.Filled.CompareArrows,
+                                    label = "Transfer",
+                                    accentColor = pocketColors.transferText,
+                                    containerColor = pocketColors.overlayTransferContainer,
+                                    testTag = "quick_action_transfer",
+                                    onClick = {
+                                        isGlobalFabExpanded = false
+                                        viewModel.navigateTo(PocketScreen.TransferForm())
+                                    }
+                                )
+                                LiquidFabActionItem(
+                                    icon = Icons.Default.Handshake,
+                                    label = "Loans",
+                                    accentColor = pocketColors.loanText,
+                                    containerColor = pocketColors.overlayLoanContainer,
+                                    testTag = "quick_action_loans",
+                                    onClick = {
+                                        isGlobalFabExpanded = false
+                                        viewModel.navigateTo(PocketScreen.LoansManagement(openCreateDialog = true))
+                                    }
+                                )
+                            }
+                        }
+
+                        FloatingActionButton(
+                            onClick = { isGlobalFabExpanded = !isGlobalFabExpanded },
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = Color.White,
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .size(58.dp)
+                                .testTag("home_fab_record")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Record",
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .rotate(globalFabRotation)
+                            )
+                        }
+                    }
+
                     val dockActiveTab = topLevelTabs.getOrNull(mainTabPagerState.targetPage)
                         ?: uiState.activeBottomTab
 
                     LiquidBottomNavigationBar(
                         activeTab = dockActiveTab,
                         onSelectTab = { tab ->
+                            isGlobalFabExpanded = false
                             val targetPage = topLevelTabs.indexOf(tab).coerceAtLeast(0)
                             viewModel.switchBottomTab(tab)
                             coroutineScope.launch {

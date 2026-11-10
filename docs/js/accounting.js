@@ -74,6 +74,7 @@ export const DEFAULT_SETTINGS = {
   hideBalancesPrivacy: false,
   autoSmsListenerEnabled: false,
   appLanguage: 'EN',
+  fundFeatureEnabled: false,
   subscriptionTier: 'FREE',
   subscriptionActivatedAt: null,
   subscriptionExpiresAt: null,
@@ -81,7 +82,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const VIRTUAL_FUND_WALLET_ID = -999;
-export const VFUND_HINT_REGEX = /\[VFUND:(1|0):(-?[0-9]+(?:\.[0-9]+)?)]/;
+export const VFUND_HINT_REGEX = /\[VFUND:(1|0):(-?[0-9]+(?:\.[0-9]+)?)(?::([0-9]+))?]/;
 
 export function isDedicatedFundWallet(wallet) {
   return String(wallet?.type || '').toUpperCase() === 'FUND' ||
@@ -98,20 +99,29 @@ export function parseWalletVirtualFund(wallet) {
     : (m
       ? (parseFloat(m[2]) || 0)
       : (wallet?.openingFundBalance !== undefined ? (parseFloat(wallet.openingFundBalance) || 0) : 0));
+  const fundResetAtMillis = m && m[3]
+    ? (parseInt(m[3], 10) || 0)
+    : (Number(wallet?.fundResetAtMillis) || 0);
   const cleanAccountHint = hint.replace(VFUND_HINT_REGEX, '').trim();
-  return { hasVirtualFund, openingFundBalance, cleanAccountHint, isFundWallet: isFundW };
+  return { hasVirtualFund, openingFundBalance, fundResetAtMillis, cleanAccountHint, isFundWallet: isFundW };
 }
 
-export function withWalletVirtualFund(wallet, enabled, openingFund = 0) {
-  const { cleanAccountHint } = parseWalletVirtualFund(wallet);
+export function withWalletVirtualFund(wallet, enabled, openingFund = 0, resetAtMillis = null) {
+  const prev = parseWalletVirtualFund(wallet);
   const roundedFund = Math.round((Number(openingFund) || 0) * 100) / 100;
-  const tag = `[VFUND:${enabled ? '1' : '0'}:${roundedFund}]`;
-  const nextHint = cleanAccountHint ? `${cleanAccountHint} ${tag}` : tag;
+  const resolvedReset = resetAtMillis !== null && resetAtMillis !== undefined
+    ? (Number(resetAtMillis) || 0)
+    : prev.fundResetAtMillis;
+  const tag = resolvedReset > 0
+    ? `[VFUND:${enabled ? '1' : '0'}:${roundedFund}:${resolvedReset}]`
+    : `[VFUND:${enabled ? '1' : '0'}:${roundedFund}]`;
+  const nextHint = prev.cleanAccountHint ? `${prev.cleanAccountHint} ${tag}` : tag;
   return {
     ...wallet,
     accountHint: nextHint,
     hasVirtualFund: Boolean(enabled),
-    openingFundBalance: enabled ? roundedFund : 0
+    openingFundBalance: enabled ? roundedFund : 0,
+    fundResetAtMillis: resolvedReset
   };
 }
 
@@ -153,10 +163,11 @@ export const AccountingEngine = {
     return PocketLocalizer.toBanglaDigits(`${sign}${symbol} ${formatted}`);
   },
 
-  calculateWalletSummary(wallet, transactions, transfers, loans, loanPayments, adjustments) {
+  calculateWalletSummary(wallet, transactions, transfers, loans, loanPayments, adjustments, fundFeatureEnabled = true) {
     const wId = Number(wallet.id);
     const vfMeta = parseWalletVirtualFund(wallet);
     const isLegacyFundWallet = vfMeta.isFundWallet;
+    const fundCycleStartMillis = Number(vfMeta.fundResetAtMillis) || 0;
 
     let incomeTotal = 0;
     let expenseTotal = 0;
@@ -171,23 +182,31 @@ export const AccountingEngine = {
     for (const tx of transactions) {
       if (Number(tx.walletId) !== wId) continue;
       const amt = Number(tx.amount) || 0;
+      const txDate = Number(tx.date) || 0;
+      const inCurrentFundCycle = txDate > fundCycleStartMillis;
       const tagsUpper = String(tx.tags || '').toUpperCase();
       if (tx.type === 'INCOME') {
         incomeTotal += amt;
-        if (tagsUpper.includes('FUND_IN') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
+        if (inCurrentFundCycle && (tagsUpper.includes('FUND_IN') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL')))) {
           fundIncomeIn += amt;
         }
       } else if (tx.type === 'EXPENSE') {
         expenseTotal += amt;
-        if (tagsUpper.includes('FUND_BORROW')) {
-          fundBorrowedOut += amt;
-        } else if (tagsUpper.includes('FUND_EXPENSE') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
-          fundOfficialSpentRaw += amt;
+        if (inCurrentFundCycle) {
+          if (tagsUpper.includes('FUND_BORROW')) {
+            fundBorrowedOut += amt;
+          } else if (tagsUpper.includes('FUND_EXPENSE') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
+            fundOfficialSpentRaw += amt;
+          }
         }
       } else if (tx.type === 'EXPENSE_REVERSAL') {
         expenseReversalTotal += amt;
-        if (tagsUpper.includes('FUND_EXPENSE') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
-          fundOfficialSpentRaw -= amt;
+        if (inCurrentFundCycle) {
+          if (tagsUpper.includes('FUND_BORROW')) {
+            fundBorrowedOut = Math.max(0, fundBorrowedOut - amt);
+          } else if (tagsUpper.includes('FUND_EXPENSE') || (isLegacyFundWallet && !tagsUpper.includes('PERSONAL'))) {
+            fundOfficialSpentRaw = Math.max(0, fundOfficialSpentRaw - amt);
+          }
         }
       }
     }
@@ -197,71 +216,152 @@ export const AccountingEngine = {
     let transferFees = 0;
     for (const tr of transfers) {
       const noteUpper = String(tr.note || '').toUpperCase();
+      const trDate = Number(tr.date) || 0;
+      const inCurrentFundCycle = trDate > fundCycleStartMillis;
       const isSameWalletInternal = Number(tr.sourceWalletId) === wId && Number(tr.destinationWalletId) === wId;
-      const srcAmt = Number(tr.amount ?? tr.principalAmount) || 0;
+      const srcAmt = Number(tr.principalAmount ?? tr.amount) || 0;
       const destAmt = tr.destinationAmount !== null && tr.destinationAmount !== undefined && Number(tr.destinationAmount) > 0
         ? Number(tr.destinationAmount)
         : srcAmt;
       const trFee = Number(tr.feeAmount) || 0;
 
       if (isSameWalletInternal) {
-        if (noteUpper.includes('[FUND_RETURN]')) {
-          fundReturnedIn += destAmt;
-        } else if (noteUpper.includes('[FUND_BORROW]')) {
-          fundBorrowedOut += srcAmt;
+        if (inCurrentFundCycle) {
+          if (noteUpper.includes('[FUND_RETURN]')) {
+            fundReturnedIn += destAmt;
+          } else if (noteUpper.includes('[FUND_TOPUP]')) {
+            fundTransferIn += destAmt;
+          } else if (noteUpper.includes('[FUND_BORROW]')) {
+            fundBorrowedOut += srcAmt;
+          } else if (noteUpper.includes('[FUND_SETTLE]')) {
+            fundTransferOut += srcAmt;
+          }
         }
         continue;
       }
 
       if (Number(tr.destinationWalletId) === wId) {
         transfersIn += destAmt;
-        if (noteUpper.includes('[FUND_RETURN]')) {
-          fundReturnedIn += destAmt;
-        } else if (noteUpper.includes('[FUND_TRANSFER]') || isLegacyFundWallet) {
-          fundTransferIn += destAmt;
+        if (inCurrentFundCycle) {
+          if (noteUpper.includes('[FUND_RETURN]')) {
+            fundReturnedIn += destAmt;
+          } else if (noteUpper.includes('[FUND_TOPUP]') || noteUpper.includes('[FUND_TRANSFER]') || isLegacyFundWallet) {
+            fundTransferIn += destAmt;
+          }
         }
       }
       if (Number(tr.sourceWalletId) === wId) {
         transfersOut += srcAmt;
         transferFees += trFee;
-        if (noteUpper.includes('[FUND_BORROW]')) {
-          fundBorrowedOut += srcAmt;
-        } else if (noteUpper.includes('[FUND_TRANSFER]') || isLegacyFundWallet) {
-          fundTransferOut += srcAmt + trFee;
+        if (inCurrentFundCycle) {
+          if (noteUpper.includes('[FUND_BORROW]')) {
+            fundBorrowedOut += srcAmt;
+          } else if (noteUpper.includes('[FUND_SETTLE]') || noteUpper.includes('[FUND_TRANSFER]') || isLegacyFundWallet) {
+            fundTransferOut += srcAmt;
+          }
         }
       }
     }
 
+    const loanMap = new Map(loans.map(l => [Number(l.id), l]));
+    const loansWithDisbursementActivity = new Set();
     let loansBorrowedIn = 0;
     let loansLentOut = 0;
-    for (const loan of loans) {
-      if (Number(loan.initialWalletId) !== wId) continue;
-      const p = Number(loan.principalAmount) || 0;
-      if (loan.direction === 'BORROWED') loansBorrowedIn += p;
-      else if (loan.direction === 'LENT') loansLentOut += p;
-    }
-
-    const loanMap = new Map(loans.map(l => [Number(l.id), l]));
     let loanRepaymentsReceivedIn = 0;
     let loanRepaymentsPaidOut = 0;
-    for (const lp of loanPayments) {
-      if (Number(lp.walletId) !== wId) continue;
-      if (lp.activityType && lp.activityType !== 'REPAYMENT') continue;
-      const parentLoan = loanMap.get(Number(lp.loanId));
+    let fundLoanIn = 0;
+    let fundLoanOut = 0;
+
+    for (const act of loanPayments) {
+      const actType = act.activityType || 'REPAYMENT';
+      if (actType === 'DISBURSEMENT') {
+        loansWithDisbursementActivity.add(Number(act.loanId));
+      }
+      if (Number(act.walletId) !== wId) continue;
+      const parentLoan = loanMap.get(Number(act.loanId));
       if (!parentLoan) continue;
-      const totalPayment = (Number(lp.principalPortion) || 0) + (Number(lp.interestPortion) || 0);
-      if (parentLoan.direction === 'LENT') loanRepaymentsReceivedIn += totalPayment;
-      else if (parentLoan.direction === 'BORROWED') loanRepaymentsPaidOut += totalPayment;
+      const isLent = parentLoan.direction === 'LENT';
+      const pPortion = Number(act.principalPortion) || 0;
+      const actDate = Number(act.date) || 0;
+      const inCurrentFundCycle = actDate > fundCycleStartMillis;
+      const actNoteUpper = String(act.note || '').toUpperCase();
+      const loanNoteUpper = String(parentLoan.note || '').toUpperCase();
+      const isFundLoanBorrowAct = fundFeatureEnabled && inCurrentFundCycle && (
+        actNoteUpper.includes('[FUND_LOAN_BORROW]') ||
+        (actType === 'DISBURSEMENT' && loanNoteUpper.includes('[FUND_LOAN_BORROW]'))
+      );
+      const isFundLoanAct = fundFeatureEnabled && inCurrentFundCycle && !isFundLoanBorrowAct && (
+        actNoteUpper.includes('[FUND_LOAN]') ||
+        (actType === 'DISBURSEMENT' && loanNoteUpper.includes('[FUND_LOAN]'))
+      );
+
+      if (actType === 'DISBURSEMENT' || actType === 'ADJUSTMENT') {
+        if (isLent) {
+          loansLentOut += pPortion;
+          if (isFundLoanBorrowAct) fundBorrowedOut += pPortion;
+          else if (isFundLoanAct) fundLoanOut += pPortion;
+        } else {
+          loansBorrowedIn += pPortion;
+          if (isFundLoanAct) fundLoanIn += pPortion;
+        }
+      } else if (actType === 'REPAYMENT') {
+        if (isLent) {
+          loanRepaymentsReceivedIn += pPortion;
+          if (isFundLoanBorrowAct || (isFundLoanAct && loanNoteUpper.includes('[FUND_LOAN_BORROW]'))) {
+            fundReturnedIn += pPortion;
+          } else if (isFundLoanAct) {
+            fundLoanIn += pPortion;
+          }
+        } else {
+          loanRepaymentsPaidOut += pPortion;
+          if (isFundLoanBorrowAct) fundBorrowedOut += pPortion;
+          else if (isFundLoanAct) fundLoanOut += pPortion;
+        }
+      }
+    }
+
+    // Fallback for loans created without an explicit DISBURSEMENT activity row
+    for (const loan of loans) {
+      if (loansWithDisbursementActivity.has(Number(loan.id))) continue;
+      if (Number(loan.initialWalletId) !== wId) continue;
+      const p = Number(loan.principalAmount) || 0;
+      const loanDate = Number(loan.startDate) || 0;
+      const inCurrentFundCycle = loanDate > fundCycleStartMillis;
+      const loanNoteUpper = String(loan.note || '').toUpperCase();
+      const isFundLoanBorrow = fundFeatureEnabled && inCurrentFundCycle && loanNoteUpper.includes('[FUND_LOAN_BORROW]');
+      const isFundLoan = fundFeatureEnabled && inCurrentFundCycle && !isFundLoanBorrow && loanNoteUpper.includes('[FUND_LOAN]');
+      if (loan.direction === 'BORROWED') {
+        loansBorrowedIn += p;
+        if (isFundLoan) fundLoanIn += p;
+      } else if (loan.direction === 'LENT') {
+        loansLentOut += p;
+        if (isFundLoanBorrow) fundBorrowedOut += p;
+        else if (isFundLoan) fundLoanOut += p;
+      }
     }
 
     let manualAdjustmentsNet = 0;
+    let fundAdjustmentsNet = 0;
     for (const adj of adjustments) {
+      if (adj.isReversed) continue;
       if (Number(adj.walletId) === wId) {
-        manualAdjustmentsNet += Number(adj.deltaAmount) || 0;
+        const diff = (adj.difference !== undefined ? Number(adj.difference) : Number(adj.deltaAmount)) || 0;
+        manualAdjustmentsNet += diff;
+        const adjTextUpper = `${adj.reason || ''} ${adj.note || ''}`.toUpperCase();
+        const inCurrentFundCycle = (Number(adj.date) || 0) > fundCycleStartMillis;
+        if (inCurrentFundCycle && adjTextUpper.includes('[FUND_ADJ]')) {
+          fundAdjustmentsNet += diff;
+        }
       }
     }
 
     const opening = Number(wallet.openingBalance) || 0;
+    // Note: if transfer fees were already recorded as separate EXPENSE transactions with transferId, don't double subtract
+    const txTransferFees = transactions
+      .filter(tx => Number(tx.walletId) === wId && tx.type === 'EXPENSE' && tx.transferId)
+      .reduce((s, tx) => s + (Number(tx.amount) || 0), 0);
+    const unrecordedTransferFees = Math.max(0, transferFees - txTransferFees);
+
     const rawBalance =
       opening +
       incomeTotal -
@@ -269,7 +369,7 @@ export const AccountingEngine = {
       expenseReversalTotal +
       transfersIn -
       transfersOut -
-      transferFees +
+      unrecordedTransferFees +
       loansBorrowedIn -
       loansLentOut +
       loanRepaymentsReceivedIn -
@@ -279,21 +379,27 @@ export const AccountingEngine = {
     const currentBalance = this.roundCurrency(rawBalance);
     const hasFundActivity =
       isLegacyFundWallet ||
-      fundIncomeIn > 0.004 ||
-      Math.abs(fundOfficialSpentRaw) > 0.004 ||
-      fundBorrowedOut > 0.004 ||
-      fundReturnedIn > 0.004 ||
-      fundTransferIn > 0.004 ||
-      fundTransferOut > 0.004;
-    const hasVirtualFund = vfMeta.hasVirtualFund || hasFundActivity;
+      Math.abs(vfMeta.openingFundBalance) > 0.005 ||
+      fundIncomeIn > 0.005 ||
+      Math.abs(fundOfficialSpentRaw) > 0.005 ||
+      fundBorrowedOut > 0.005 ||
+      fundReturnedIn > 0.005 ||
+      fundTransferIn > 0.005 ||
+      fundTransferOut > 0.005 ||
+      fundLoanIn > 0.005 ||
+      fundLoanOut > 0.005 ||
+      Math.abs(fundAdjustmentsNet) > 0.005;
+    const hasVirtualFund = Boolean(fundFeatureEnabled && (vfMeta.hasVirtualFund || hasFundActivity));
     const openingFund = hasVirtualFund ? this.roundCurrency(vfMeta.openingFundBalance) : 0;
     const fundOfficialSpent = this.roundCurrency(Math.max(0, fundOfficialSpentRaw));
-    const fundBorrowedDue = this.roundCurrency(Math.max(0, fundBorrowedOut - fundReturnedIn));
-    const rawFundBalance = isLegacyFundWallet
-      ? currentBalance
-      : (hasVirtualFund
-        ? (openingFund + fundIncomeIn + fundTransferIn + fundReturnedIn - fundOfficialSpent - fundBorrowedOut - fundTransferOut)
-        : 0);
+    const fundBorrowedDue = hasVirtualFund ? this.roundCurrency(Math.max(0, fundBorrowedOut - fundReturnedIn)) : 0;
+    const rawFundBalance = !fundFeatureEnabled
+      ? 0
+      : isLegacyFundWallet
+        ? currentBalance
+        : (hasVirtualFund
+          ? (openingFund + fundIncomeIn + fundTransferIn + fundReturnedIn + fundLoanIn - fundOfficialSpent - fundBorrowedOut - fundTransferOut - fundLoanOut + fundAdjustmentsNet)
+          : 0);
     const fundBalance = hasVirtualFund ? this.roundCurrency(rawFundBalance) : 0;
     const personalBalance = hasVirtualFund ? this.roundCurrency(currentBalance - fundBalance) : currentBalance;
 
@@ -301,7 +407,8 @@ export const AccountingEngine = {
       wallet: {
         ...wallet,
         hasVirtualFund,
-        openingFundBalance: openingFund
+        openingFundBalance: openingFund,
+        fundResetAtMillis: fundCycleStartMillis
       },
       openingBalance: this.roundCurrency(opening),
       incomeTotal: this.roundCurrency(incomeTotal),
@@ -318,6 +425,7 @@ export const AccountingEngine = {
       currentBalance,
       hasVirtualFund,
       openingFundBalance: openingFund,
+      fundResetAtMillis: fundCycleStartMillis,
       fundIncomeIn: this.roundCurrency(fundIncomeIn),
       fundTransferIn: this.roundCurrency(fundTransferIn),
       fundTransferOut: this.roundCurrency(fundTransferOut),
@@ -326,7 +434,9 @@ export const AccountingEngine = {
       personalBalance,
       fundBorrowedDue,
       fundBorrowedTotal: this.roundCurrency(fundBorrowedOut),
-      fundReturnedTotal: this.roundCurrency(fundReturnedIn)
+      fundReturnedTotal: this.roundCurrency(fundReturnedIn),
+      fundLoanIn: this.roundCurrency(fundLoanIn),
+      fundLoanOut: this.roundCurrency(fundLoanOut)
     };
   },
 
@@ -343,7 +453,7 @@ export const AccountingEngine = {
       .slice()
       .sort((a, b) => (Number(b.startDate) || 0) - (Number(a.startDate) || 0))
       .map(loan => {
-        const payments = (paymentsByLoan.get(Number(loan.id)) || [])
+        const payments = (paymentsByLoan.get(Number(loan.id)) || []).slice().sort((a, b) => (Number(b.date) || 0) - (Number(a.date) || 0));
         let totalDisbursed = 0;
         let totalAdditions = 0;
         let principalRepaid = 0;
@@ -369,12 +479,15 @@ export const AccountingEngine = {
         const orig = this.roundCurrency(basePrincipal);
         const rawOutstanding = this.roundCurrency(orig + totalAdditions - principalRepaid);
         const outstandingPrincipal = Math.max(0, rawOutstanding);
-        const isSettled = outstandingPrincipal <= 0.004;
+        const isSettled = outstandingPrincipal <= 0.005;
         const isOverdue = !isSettled && loan.dueDate && Number(loan.dueDate) < nowMillis;
-        const status = isSettled ? 'SETTLED' : isOverdue ? 'OVERDUE' : 'ACTIVE';
+        const status = isSettled ? 'SETTLED' : isOverdue ? 'OVERDUE' : principalRepaid > 0.005 ? 'PARTIAL' : 'ACTIVE';
         const initialWId = Number(loan.initialWalletId) || 0;
         const w = initialWId > 0 ? walletMap.get(initialWId) : null;
-        const walletName = initialWId <= 0 ? 'No wallet' : (w ? w.name : 'No wallet');
+        const baseWName = initialWId <= 0 ? 'No wallet' : (w ? w.name : 'No wallet');
+        const noteUpper = String(loan.note || '').toUpperCase();
+        const isFundLoanNote = noteUpper.includes('[FUND_LOAN]') || noteUpper.includes('[FUND_LOAN_BORROW]');
+        const walletName = (isFundLoanNote && baseWName !== 'No wallet') ? `${baseWName}-Fund` : baseWName;
         return {
           loan,
           walletName,
@@ -433,7 +546,7 @@ export const AccountingEngine = {
     return result.sort((a, b) => Math.abs(b.netReceivableMinusPayable) - Math.abs(a.netReceivableMinusPayable));
   },
 
-  buildUnifiedLedger(wallets, categories, transactions, transfers, loans, loanPayments, adjustments) {
+  buildUnifiedLedger(wallets, categories, transactions, transfers, loans, loanPayments, adjustments, fundFeatureEnabled = true) {
     const walletMap = new Map(wallets.map(w => [Number(w.id), w]));
     const catMap = new Map(categories.map(c => [Number(c.id), c]));
     const loanMap = new Map(loans.map(l => [Number(l.id), l]));
@@ -441,33 +554,65 @@ export const AccountingEngine = {
 
     for (const tx of transactions) {
       const w = walletMap.get(Number(tx.walletId));
+      if (!fundFeatureEnabled && w && isDedicatedFundWallet(w)) continue;
+      const walletName = w ? w.name : 'Wallet';
+      const vfMeta = parseWalletVirtualFund(w);
       const cat = catMap.get(Number(tx.categoryId));
+      const catName = cat ? cat.name : (tx.type === 'INCOME' ? 'Income' : 'Uncategorized');
       const isIncome = tx.type === 'INCOME';
       const isReversal = tx.type === 'EXPENSE_REVERSAL';
       const tagsUpper = String(tx.tags || '').toUpperCase();
-      const isFundBorrow = tagsUpper.includes('FUND_BORROW');
-      const isFundExpense = tagsUpper.includes('FUND_EXPENSE');
-      const isFundIn = tagsUpper.includes('FUND_IN');
-      const fundTagSuffix = isFundBorrow ? ' • Personal Borrow' : isFundExpense ? ' • Fund Expense' : isFundIn ? ' • Added to Fund' : '';
+      const isFundBorrow = fundFeatureEnabled && tagsUpper.includes('FUND_BORROW');
+      const isFundExpense = fundFeatureEnabled && tagsUpper.includes('FUND_EXPENSE');
+      const isFundIn = fundFeatureEnabled && tagsUpper.includes('FUND_IN');
+      const isFundSubWalletTx = isFundBorrow || isFundExpense || isFundIn;
+
+      const subWalletLabel = isFundSubWalletTx
+        ? `${walletName}-Fund`
+        : (fundFeatureEnabled && vfMeta.hasVirtualFund ? `${walletName}-Personal` : walletName);
+
+      const badgeLabel = tx.transferId
+        ? 'Transfer Fee'
+        : tx.parentTransactionId
+          ? 'Service Fee'
+          : tx.loanActivityId
+            ? 'Loan Interest'
+            : isReversal
+              ? 'Refund Reversal'
+              : isFundBorrow
+                ? 'Personal Borrow'
+                : isFundExpense
+                  ? 'Fund Expense'
+                  : isFundIn
+                    ? 'Added to Fund'
+                    : '';
+
+      const signedAmt = isIncome || isReversal ? Number(tx.amount) || 0 : -(Number(tx.amount) || 0);
       entries.push({
         uniqueKey: `TX_${tx.id}`,
-        entityId: tx.id,
+        entityId: Number(tx.id),
         kind: isIncome ? 'INCOME' : isReversal ? 'EXPENSE_REVERSAL' : 'EXPENSE',
         date: Number(tx.date) || Date.now(),
-        title: cat ? cat.name : (isIncome ? 'Income' : 'Expense'),
-        subtitle: `${w ? w.name : 'Wallet'}${tx.note ? ' • ' + tx.note : ''}${fundTagSuffix}`,
+        title: (tx.note && String(tx.note).trim()) ? String(tx.note).trim() : catName,
+        subtitle: `${catName} · ${subWalletLabel}`,
+        routeText: subWalletLabel,
         walletId: Number(tx.walletId),
+        walletName,
         secondaryWalletId: null,
+        secondaryWalletName: null,
         categoryId: tx.categoryId ? Number(tx.categoryId) : null,
-        signedAmountText: `${isIncome || isReversal ? '+' : '−'}${this.formatAmount(tx.amount, this.currencySymbolForCode(w?.currency))}`,
+        categoryName: catName,
+        signedAmount: this.roundCurrency(signedAmt),
+        signedAmountText: `${isIncome || isReversal ? '+' : '−'}${this.formatMoney(Math.abs(tx.amount), this.currencySymbolForCode(w?.currency))}`,
         rawAmount: this.roundCurrency(tx.amount),
         isPositiveFlow: isIncome || isReversal,
-        badgeLabel: isFundBorrow ? 'PERSONAL BORROW' : isFundExpense ? 'FUND EXPENSE' : isFundIn ? 'FUND IN' : (isIncome ? 'INCOME' : isReversal ? 'REFUND' : 'EXPENSE'),
+        badgeLabel,
+        note: tx.note || '',
         reference: tx.reference || '',
         tags: tx.tags || '',
         attachmentUri: tx.attachmentUri || '',
-        iconName: cat?.iconName || (isIncome ? 'PAYMENTS' : 'RECEIPT'),
-        colorHex: cat?.colorHex || (isIncome ? '#22C55E' : '#EF4444'),
+        iconName: cat?.iconName || (isIncome ? 'TRENDING_UP' : 'RECEIPT'),
+        colorHex: cat?.colorHex || (isIncome ? '#15803D' : '#B91C1C'),
         rawEntity: tx
       });
     }
@@ -475,131 +620,315 @@ export const AccountingEngine = {
     for (const tr of transfers) {
       const srcW = walletMap.get(Number(tr.sourceWalletId));
       const dstW = walletMap.get(Number(tr.destinationWalletId));
+      const srcName = srcW ? srcW.name : 'Source';
+      const dstName = dstW ? dstW.name : 'Destination';
       const noteUpper = String(tr.note || '').toUpperCase();
-      const isBorrowTr = noteUpper.includes('[FUND_BORROW]');
-      const isReturnTr = noteUpper.includes('[FUND_RETURN]');
       const isFundTr = noteUpper.includes('[FUND_TRANSFER]');
-      const cleanNote = String(tr.note || '')
-        .replace(/\[FUND_BORROW\]/gi, '')
-        .replace(/\[FUND_RETURN\]/gi, '')
-        .replace(/\[FUND_TRANSFER\]/gi, '')
-        .trim();
-      const trAmt = Number(tr.amount ?? tr.principalAmount) || 0;
+      const isBorrowTr = noteUpper.includes('[FUND_BORROW]');
+      const isSettleTr = noteUpper.includes('[FUND_SETTLE]');
+      const isReturnTr = noteUpper.includes('[FUND_RETURN]');
+      const isTopupTr = noteUpper.includes('[FUND_TOPUP]');
+      const hasExplicitFundTag = isFundTr || isBorrowTr || isSettleTr || isReturnTr || isTopupTr;
       const isSameW = Number(tr.sourceWalletId) === Number(tr.destinationWalletId);
+      if (!fundFeatureEnabled && !hasExplicitFundTag && (isSameW || isDedicatedFundWallet(srcW) || isDedicatedFundWallet(dstW))) {
+        continue;
+      }
+
+      const cleanNote = String(tr.note || '')
+        .replace(/\[FUND_TRANSFER\]/gi, '')
+        .replace(/\[FUND_BORROW\]/gi, '')
+        .replace(/\[FUND_SETTLE\]/gi, '')
+        .replace(/\[FUND_RETURN\]/gi, '')
+        .replace(/\[FUND_TOPUP\]/gi, '')
+        .trim();
+
+      const srcVf = parseWalletVirtualFund(srcW);
+      const dstVf = parseWalletVirtualFund(dstW);
+      const routeText = (isReturnTr || isTopupTr)
+        ? `${srcName}-Personal → ${dstName}-Fund`
+        : (isBorrowTr || isSettleTr)
+          ? `${srcName}-Fund → ${dstName}-Personal`
+          : isFundTr
+            ? `${srcName}-Fund → ${dstName}-Fund`
+            : (fundFeatureEnabled && (srcVf.hasVirtualFund || dstVf.hasVirtualFund))
+              ? `${srcName}-Personal → ${dstName}-Personal`
+              : `${srcName} → ${dstName}`;
+
+      const transferSubtitle = isReturnTr
+        ? `Return to Fund · ${routeText}`
+        : isTopupTr
+          ? `Official Fund In · ${routeText}`
+          : isBorrowTr
+            ? `Personal Borrow · ${routeText}`
+            : isSettleTr
+              ? `Official Fund Out · ${routeText}`
+              : isFundTr
+                ? `Fund Transfer · ${routeText}`
+                : `Transfer · ${routeText}`;
+
+      const badgeLabel = isFundTr
+        ? 'Fund Transfer'
+        : isBorrowTr
+          ? 'Personal Borrow'
+          : isSettleTr
+            ? 'Official Fund Out'
+            : isReturnTr
+              ? 'Returned to Fund'
+              : isTopupTr
+                ? 'Official Fund In'
+                : (Number(tr.feeAmount) > 0 ? `Fee: ${this.formatMoney(tr.feeAmount, this.currencySymbolForCode(srcW?.currency))}` : 'Transfer');
+
+      const trAmt = Number(tr.principalAmount ?? tr.amount) || 0;
+      const trTags = isReturnTr
+        ? 'FUND_RETURN'
+        : isTopupTr
+          ? 'FUND_TOPUP'
+          : isBorrowTr
+            ? 'FUND_BORROW'
+            : isSettleTr
+              ? 'FUND_SETTLE'
+              : isFundTr
+                ? 'FUND_TRANSFER'
+                : '';
+
+      const iconName = isReturnTr
+        ? 'KEYBOARD_RETURN'
+        : isTopupTr
+          ? 'ADD_CIRCLE'
+          : isBorrowTr
+            ? 'PAYMENTS'
+            : 'SWAP_HORIZ';
+
+      const colorHex = isReturnTr
+        ? '#15803D'
+        : isTopupTr
+          ? '#0D9488'
+          : isBorrowTr
+            ? '#DC2626'
+            : '#1D4ED8';
+
       entries.push({
         uniqueKey: `TR_${tr.id}`,
-        entityId: tr.id,
+        entityId: Number(tr.id),
         kind: 'TRANSFER',
         date: Number(tr.date) || Date.now(),
-        title: isSameW && isReturnTr
-          ? `${srcW ? srcW.name : 'Wallet'} (Personal → Fund)`
-          : `${srcW ? srcW.name : 'Wallet'} → ${dstW ? dstW.name : 'Wallet'}`,
-        subtitle: cleanNote ? cleanNote : (tr.feeAmount > 0 ? `Fee: ${this.formatAmount(tr.feeAmount, this.currencySymbolForCode(srcW?.currency))}` : 'Wallet Transfer'),
+        title: cleanNote ? cleanNote : routeText,
+        subtitle: transferSubtitle,
+        routeText,
         walletId: Number(tr.sourceWalletId),
+        walletName: srcName,
         secondaryWalletId: Number(tr.destinationWalletId),
+        secondaryWalletName: dstName,
         categoryId: null,
-        signedAmountText: this.formatAmount(trAmt, this.currencySymbolForCode(srcW?.currency)),
+        categoryName: 'Transfer',
+        signedAmount: this.roundCurrency(trAmt),
+        signedAmountText: `⇄ ${this.formatMoney(trAmt, this.currencySymbolForCode(srcW?.currency))}`,
         rawAmount: this.roundCurrency(trAmt),
+        feeAmount: this.roundCurrency(tr.feeAmount || 0),
         isPositiveFlow: false,
-        badgeLabel: isBorrowTr ? 'PERSONAL BORROW' : isReturnTr ? 'RETURNED TO FUND' : isFundTr ? 'FUND TRANSFER' : 'TRANSFER',
+        badgeLabel,
+        note: tr.note || '',
         reference: '',
-        tags: '',
+        tags: trTags,
         attachmentUri: '',
-        iconName: 'SWAP_HORIZ',
-        colorHex: '#3B82F6',
+        iconName,
+        colorHex,
         rawEntity: tr
       });
     }
 
-    for (const loan of loans) {
-      const w = walletMap.get(Number(loan.initialWalletId));
-      const isLent = loan.direction === 'LENT';
-      entries.push({
-        uniqueKey: `LOAN_${loan.id}`,
-        entityId: loan.id,
-        kind: isLent ? 'LOAN_LENT' : 'LOAN_BORROWED',
-        date: Number(loan.startDate) || Date.now(),
-        title: `${isLent ? 'Lent to' : 'Borrowed from'} ${loan.personName}`,
-        subtitle: `${w ? w.name : 'Wallet'}${loan.note ? ' • ' + loan.note : ''}`,
-        walletId: Number(loan.initialWalletId),
-        secondaryWalletId: null,
-        categoryId: null,
-        signedAmountText: `${isLent ? '−' : '+'}${this.formatAmount(loan.principalAmount, this.currencySymbolForCode(w?.currency))}`,
-        rawAmount: this.roundCurrency(loan.principalAmount),
-        isPositiveFlow: !isLent,
-        badgeLabel: isLent ? 'LOAN OUT' : 'LOAN IN',
-        reference: '',
-        tags: '',
-        attachmentUri: loan.attachmentUri || '',
-        iconName: 'HANDSHAKE',
-        colorHex: '#FF9838',
-        rawEntity: loan
-      });
-    }
-
+    const loansWithDisbursementActivity = new Set();
     for (const lp of loanPayments) {
+      const actType = lp.activityType || 'REPAYMENT';
+      if (actType === 'DISBURSEMENT') {
+        loansWithDisbursementActivity.add(Number(lp.loanId));
+      }
       const parentLoan = loanMap.get(Number(lp.loanId));
       if (!parentLoan) continue;
       const w = walletMap.get(Number(lp.walletId));
+      const walletName = w ? w.name : 'No wallet';
+      const vfMeta = parseWalletVirtualFund(w);
       const isLent = parentLoan.direction === 'LENT';
-      const totalAmt = this.roundCurrency((Number(lp.principalPortion) || 0) + (Number(lp.interestPortion) || 0));
+      const actNoteUpper = String(lp.note || '').toUpperCase();
+      const loanNoteUpper = String(parentLoan.note || '').toUpperCase();
+      const isFundLoanBorrowAct = fundFeatureEnabled && (
+        actNoteUpper.includes('[FUND_LOAN_BORROW]') ||
+        (actType === 'DISBURSEMENT' && loanNoteUpper.includes('[FUND_LOAN_BORROW]'))
+      );
+      const isFundLoanAct = fundFeatureEnabled && !isFundLoanBorrowAct && (
+        actNoteUpper.includes('[FUND_LOAN]') ||
+        (actType === 'DISBURSEMENT' && loanNoteUpper.includes('[FUND_LOAN]'))
+      );
+      const cleanActNote = String(lp.note || '')
+        .replace(/\[FUND_LOAN_BORROW\]/gi, '')
+        .replace(/\[FUND_LOAN\]/gi, '')
+        .trim();
+
+      const isInflow = (actType === 'DISBURSEMENT' || actType === 'ADJUSTMENT') ? !isLent : isLent;
+      const pPortion = this.roundCurrency(Number(lp.principalPortion) || 0);
+      const signedAmt = isInflow ? pPortion : -pPortion;
+      const typeLabel = actType === 'DISBURSEMENT'
+        ? (isLent ? `Lent to ${parentLoan.personName}` : `Borrowed from ${parentLoan.personName}`)
+        : actType === 'REPAYMENT'
+          ? (isLent ? `Repayment from ${parentLoan.personName}` : `Repaid to ${parentLoan.personName}`)
+          : `Loan adjustment (${parentLoan.personName})`;
+      const subWalletName = walletName === 'No wallet'
+        ? walletName
+        : (isFundLoanAct || isFundLoanBorrowAct)
+          ? `${walletName}-Fund`
+          : (fundFeatureEnabled && vfMeta.hasVirtualFund ? `${walletName}-Personal` : walletName);
+
+      const badgeLabel = isFundLoanBorrowAct
+        ? 'Personal Borrow'
+        : isFundLoanAct
+          ? (isLent ? 'Fund Loan (Receivable)' : 'Fund Loan (Payable)')
+          : (isLent ? 'Loan (Receivable)' : 'Loan (Payable)');
+
       entries.push({
-        uniqueKey: `LP_${lp.id}`,
-        entityId: lp.id,
-        kind: 'LOAN_REPAYMENT',
+        uniqueKey: `LA_${lp.id}`,
+        entityId: Number(lp.id),
+        kind: actType === 'REPAYMENT' ? 'LOAN_REPAYMENT' : (isLent ? 'LOAN_LENT' : 'LOAN_BORROWED'),
         date: Number(lp.date) || Date.now(),
-        title: `${isLent ? 'Repayment from' : 'Repayment to'} ${parentLoan.personName}`,
-        subtitle: `${w ? w.name : 'Wallet'}${lp.note ? ' • ' + lp.note : ''}`,
-        walletId: Number(lp.walletId),
+        title: cleanActNote || typeLabel,
+        subtitle: `${typeLabel} · ${subWalletName}`,
+        routeText: subWalletName,
+        walletId: Number(lp.walletId) || 0,
+        walletName,
         secondaryWalletId: null,
         categoryId: null,
-        signedAmountText: `${isLent ? '+' : '−'}${this.formatAmount(totalAmt, this.currencySymbolForCode(w?.currency))}`,
-        rawAmount: totalAmt,
-        isPositiveFlow: isLent,
-        badgeLabel: 'REPAYMENT',
+        categoryName: 'Loan Principal',
+        signedAmount: signedAmt,
+        signedAmountText: `${isInflow ? '+' : '−'}${this.formatMoney(pPortion, this.currencySymbolForCode(w?.currency))}`,
+        rawAmount: pPortion,
+        isPositiveFlow: isInflow,
+        badgeLabel,
+        note: lp.note || '',
         reference: '',
-        tags: '',
-        attachmentUri: '',
+        tags: isFundLoanBorrowAct ? 'FUND_LOAN_BORROW' : isFundLoanAct ? 'FUND_LOAN' : '',
+        attachmentUri: parentLoan.attachmentUri || '',
         iconName: 'HANDSHAKE',
-        colorHex: isLent ? '#22C55E' : '#FF9838',
+        colorHex: '#B45309',
         rawEntity: lp
       });
     }
 
-    for (const adj of adjustments) {
-      const w = walletMap.get(Number(adj.walletId));
-      const delta = Number(adj.deltaAmount) || 0;
+    // Fallback for loans created without an explicit DISBURSEMENT activity row
+    for (const loan of loans) {
+      if (loansWithDisbursementActivity.has(Number(loan.id))) continue;
+      const w = walletMap.get(Number(loan.initialWalletId));
+      const walletName = w ? w.name : 'No wallet';
+      const vfMeta = parseWalletVirtualFund(w);
+      const isLent = loan.direction === 'LENT';
+      const loanNoteUpper = String(loan.note || '').toUpperCase();
+      const isFundLoanBorrow = fundFeatureEnabled && loanNoteUpper.includes('[FUND_LOAN_BORROW]');
+      const isFundLoan = fundFeatureEnabled && !isFundLoanBorrow && loanNoteUpper.includes('[FUND_LOAN]');
+      const cleanLoanNote = String(loan.note || '')
+        .replace(/\[FUND_LOAN_BORROW\]/gi, '')
+        .replace(/\[FUND_LOAN\]/gi, '')
+        .trim();
+      const typeLabel = isLent ? `Lent to ${loan.personName}` : `Borrowed from ${loan.personName}`;
+      const subWalletName = walletName === 'No wallet'
+        ? walletName
+        : (isFundLoan || isFundLoanBorrow)
+          ? `${walletName}-Fund`
+          : (fundFeatureEnabled && vfMeta.hasVirtualFund ? `${walletName}-Personal` : walletName);
+      const pAmt = this.roundCurrency(loan.principalAmount);
+      const signedAmt = isLent ? -pAmt : pAmt;
+      const badgeLabel = isFundLoanBorrow
+        ? 'Personal Borrow'
+        : isFundLoan
+          ? (isLent ? 'Fund Loan (Receivable)' : 'Fund Loan (Payable)')
+          : (isLent ? 'Loan (Receivable)' : 'Loan (Payable)');
+
       entries.push({
-        uniqueKey: `ADJ_${adj.id}`,
-        entityId: adj.id,
-        kind: 'ADJUSTMENT',
-        date: Number(adj.date) || Date.now(),
-        title: `Balance Adjustment (${w ? w.name : 'Wallet'})`,
-        subtitle: adj.reason || 'Reconciliation',
-        walletId: Number(adj.walletId),
+        uniqueKey: `LOAN_${loan.id}`,
+        entityId: Number(loan.id),
+        kind: isLent ? 'LOAN_LENT' : 'LOAN_BORROWED',
+        date: Number(loan.startDate) || Date.now(),
+        title: cleanLoanNote || typeLabel,
+        subtitle: `${typeLabel} · ${subWalletName}`,
+        routeText: subWalletName,
+        walletId: Number(loan.initialWalletId) || 0,
+        walletName,
         secondaryWalletId: null,
         categoryId: null,
-        signedAmountText: `${delta >= 0 ? '+' : '−'}${this.formatAmount(Math.abs(delta), this.currencySymbolForCode(w?.currency))}`,
+        categoryName: 'Loan Principal',
+        signedAmount: signedAmt,
+        signedAmountText: `${isLent ? '−' : '+'}${this.formatMoney(pAmt, this.currencySymbolForCode(w?.currency))}`,
+        rawAmount: pAmt,
+        isPositiveFlow: !isLent,
+        badgeLabel,
+        note: loan.note || '',
+        reference: '',
+        tags: isFundLoanBorrow ? 'FUND_LOAN_BORROW' : isFundLoan ? 'FUND_LOAN' : '',
+        attachmentUri: loan.attachmentUri || '',
+        iconName: 'HANDSHAKE',
+        colorHex: '#B45309',
+        rawEntity: loan
+      });
+    }
+
+    for (const adj of adjustments) {
+      if (adj.isReversed) continue;
+      const w = walletMap.get(Number(adj.walletId));
+      const walletName = w ? w.name : 'Wallet';
+      const delta = adj.difference !== undefined ? Number(adj.difference) : (Number(adj.deltaAmount) || 0);
+      const adjNote = String(adj.note || '').trim();
+      const adjReason = String(adj.reason || 'Reconciliation').trim();
+      entries.push({
+        uniqueKey: `ADJ_${adj.id}`,
+        entityId: Number(adj.id),
+        kind: 'ADJUSTMENT',
+        date: Number(adj.date) || Date.now(),
+        title: adjNote || `Balance Adjustment (${adjReason})`,
+        subtitle: `${adjReason} · ${walletName}`,
+        routeText: walletName,
+        walletId: Number(adj.walletId),
+        walletName,
+        secondaryWalletId: null,
+        categoryId: null,
+        categoryName: 'Reconciliation',
+        signedAmount: this.roundCurrency(delta),
+        signedAmountText: `${delta >= 0 ? '+' : '−'}${this.formatMoney(Math.abs(delta), this.currencySymbolForCode(w?.currency))}`,
         rawAmount: this.roundCurrency(Math.abs(delta)),
         isPositiveFlow: delta >= 0,
-        badgeLabel: 'ADJUSTMENT',
+        badgeLabel: 'Adjustment',
+        note: adj.note || adjReason,
         reference: '',
         tags: '',
         attachmentUri: '',
         iconName: 'TUNE',
-        colorHex: '#A855F7',
+        colorHex: '#6D28D9',
         rawEntity: adj
       });
     }
 
-    return entries.sort((a, b) => b.date - a.date);
+    return entries.sort((a, b) => (b.date - a.date) || ((b.entityId || 0) - (a.entityId || 0)));
   },
 
-  calculateMonthlyReport(year, month, categories, transactions, transfers, loans, loanPayments, splits = []) {
+  calculateMonthlyReport(year, month, categories, transactions, transfers, loans, loanPayments, splits = [], wallets = [], subWalletFilter = 'PERSONAL') {
+    if (typeof wallets === 'string') {
+      subWalletFilter = wallets;
+      wallets = [];
+    }
     const startMs = new Date(year, month, 1, 0, 0, 0, 0).getTime();
     const endMs = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
 
-    const monthTxs = transactions.filter(t => t.date >= startMs && t.date <= endMs);
+    const fundWalletIds = new Set((Array.isArray(wallets) ? wallets : []).filter(w => isDedicatedFundWallet(w)).map(w => Number(w.id)));
+    const normFilter = String(subWalletFilter || 'PERSONAL').trim().toUpperCase();
+
+    const filteredTransactions = transactions.filter(tx => {
+      const isDedicatedFund = fundWalletIds.has(Number(tx.walletId));
+      const tagsUpper = String(tx.tags || '').toUpperCase();
+      const isFundIn = tagsUpper.includes('FUND_IN') || (isDedicatedFund && tx.type === 'INCOME' && !tagsUpper.includes('PERSONAL'));
+      const isFundExpense = tagsUpper.includes('FUND_EXPENSE') || tagsUpper.includes('FUND_BORROW') ||
+        (isDedicatedFund && (tx.type === 'EXPENSE' || tx.type === 'EXPENSE_REVERSAL') && !tagsUpper.includes('PERSONAL'));
+      if (normFilter === 'FUND') return isFundIn || isFundExpense;
+      if (normFilter === 'PERSONAL') return !isFundIn && !isFundExpense;
+      return true;
+    });
+
+    const monthTxs = filteredTransactions.filter(t => t.date >= startMs && t.date <= endMs);
     const monthTransfers = transfers.filter(t => t.date >= startMs && t.date <= endMs);
     const monthLoanPayments = loanPayments.filter(lp => lp.date >= startMs && lp.date <= endMs);
     const loanMap = new Map(loans.map(l => [Number(l.id), l]));
@@ -615,18 +944,28 @@ export const AccountingEngine = {
       else if (tx.type === 'EXPENSE_REVERSAL') expenseReversals += amt;
     }
 
+    // Only add transfer fees not already recorded as separate EXPENSE rows
+    const recordedFeeTransferIds = new Set(monthTxs.filter(tx => tx.transferId).map(tx => Number(tx.transferId)));
     let transferFees = 0;
     for (const tr of monthTransfers) {
-      transferFees += Number(tr.feeAmount) || 0;
+      if (!recordedFeeTransferIds.has(Number(tr.id))) {
+        transferFees += Number(tr.feeAmount) || 0;
+      }
     }
 
+    const recordedInterestActIds = new Set(monthTxs.filter(tx => tx.loanActivityId).map(tx => Number(tx.loanActivityId)));
     let loanInterestEarned = 0;
     let loanInterestPaid = 0;
     for (const lp of monthLoanPayments) {
+      if (lp.activityType && lp.activityType !== 'REPAYMENT') continue;
+      if (recordedInterestActIds.has(Number(lp.id))) continue;
       const interest = Number(lp.interestPortion) || 0;
       if (interest <= 0) continue;
       const parent = loanMap.get(Number(lp.loanId));
       if (!parent) continue;
+      const isOfficialFundLoan = String(parent.note || '').toUpperCase().includes('[FUND_LOAN]');
+      if (normFilter === 'PERSONAL' && isOfficialFundLoan) continue;
+      if (normFilter === 'FUND' && !isOfficialFundLoan) continue;
       if (parent.direction === 'LENT') loanInterestEarned += interest;
       else loanInterestPaid += interest;
     }
@@ -664,6 +1003,11 @@ export const AccountingEngine = {
         cur.amount += Number(tx.amount) || 0;
         cur.count += 1;
         expByCat.set(cid, cur);
+      } else if (tx.type === 'EXPENSE_REVERSAL') {
+        const cid = Number(tx.categoryId) || 0;
+        const cur = expByCat.get(cid) || { amount: 0, count: 0 };
+        cur.amount -= Number(tx.amount) || 0;
+        expByCat.set(cid, cur);
       } else if (tx.type === 'INCOME') {
         const cid = Number(tx.categoryId) || 0;
         const cur = incByCat.get(cid) || { amount: 0, count: 0 };
@@ -674,6 +1018,7 @@ export const AccountingEngine = {
     }
 
     const expenseBreakdown = Array.from(expByCat.entries())
+      .filter(([, data]) => data.amount > 0.005)
       .map(([cid, data]) => {
         const cat = catMap.get(cid);
         const amount = this.roundCurrency(data.amount);
@@ -691,6 +1036,7 @@ export const AccountingEngine = {
       .sort((a, b) => b.amount - a.amount);
 
     const incomeBreakdown = Array.from(incByCat.entries())
+      .filter(([, data]) => data.amount > 0.005)
       .map(([cid, data]) => {
         const cat = catMap.get(cid);
         const amount = this.roundCurrency(data.amount);
@@ -736,40 +1082,134 @@ export const AccountingEngine = {
     };
   },
 
-  buildWalletRunningBalanceLedger(wallet, unifiedLedger) {
+  buildWalletRunningBalanceLedger(wallet, unifiedLedger, subWalletMode = 0) {
+    const mode = subWalletMode === 'PERSONAL' ? 1 : subWalletMode === 'FUND' ? 2 : (Number(subWalletMode) || 0);
     const wId = Number(wallet.id);
-    const relevant = unifiedLedger
-      .filter(e => Number(e.walletId) === wId || Number(e.secondaryWalletId) === wId)
-      .slice()
-      .sort((a, b) => a.date - b.date);
+    const vfMeta = parseWalletVirtualFund(wallet);
+    const fundResetAtMillis = Number(vfMeta.fundResetAtMillis) || 0;
+    const openingFund = vfMeta.isFundWallet
+      ? Math.max(0, Number(wallet.openingBalance) || 0)
+      : (vfMeta.hasVirtualFund ? (Number(vfMeta.openingFundBalance) || 0) : 0);
 
-    let running = Number(wallet.openingBalance) || 0;
+    // Filter entries belonging to this wallet & sub-wallet mode
+    const relevant = unifiedLedger
+      .filter(entry => {
+        if (Number(entry.walletId) !== wId && Number(entry.secondaryWalletId) !== wId) return false;
+        const tagsUpper = String(entry.tags || '').toUpperCase();
+        const noteUpper = String(entry.note || '').toUpperCase();
+        const isFundTx = tagsUpper.includes('FUND_IN') || tagsUpper.includes('FUND_EXPENSE') || tagsUpper.includes('FUND_BORROW');
+        const isFundLoan = noteUpper.includes('[FUND_LOAN]') || noteUpper.includes('[FUND_LOAN_BORROW]') || tagsUpper.includes('FUND_LOAN');
+        if (mode === 1) {
+          // Personal sub-wallet
+          if (entry.kind === 'TRANSFER') {
+            if (noteUpper.includes('[FUND_TRANSFER]')) return false;
+            const isBorrowOrSettle = noteUpper.includes('[FUND_BORROW]') || noteUpper.includes('[FUND_SETTLE]');
+            const isReturnOrTopup = noteUpper.includes('[FUND_RETURN]') || noteUpper.includes('[FUND_TOPUP]');
+            if (Number(entry.walletId) === wId && Number(entry.secondaryWalletId) === wId) {
+              return isBorrowOrSettle || isReturnOrTopup;
+            }
+            if (Number(entry.walletId) === wId) return !isBorrowOrSettle;
+            if (Number(entry.secondaryWalletId) === wId) return !isReturnOrTopup;
+            return true;
+          }
+          if (entry.kind.startsWith('LOAN')) return !isFundLoan;
+          if (entry.kind === 'ADJUSTMENT') return !noteUpper.includes('-FUND') && !noteUpper.includes('[FUND_ADJ]');
+          return !isFundTx;
+        }
+        if (mode === 2) {
+          // Fund sub-wallet
+          if (Number(entry.date) <= fundResetAtMillis) return false;
+          if (entry.kind === 'TRANSFER') {
+            const isFundTr = noteUpper.includes('[FUND_TRANSFER]');
+            const isBorrowOrSettle = noteUpper.includes('[FUND_BORROW]') || noteUpper.includes('[FUND_SETTLE]');
+            const isReturnOrTopup = noteUpper.includes('[FUND_RETURN]') || noteUpper.includes('[FUND_TOPUP]');
+            if (Number(entry.walletId) === wId && Number(entry.secondaryWalletId) === wId) {
+              return isBorrowOrSettle || isReturnOrTopup;
+            }
+            if (Number(entry.walletId) === wId) return isFundTr || isBorrowOrSettle;
+            if (Number(entry.secondaryWalletId) === wId) return isFundTr || isReturnOrTopup;
+            return false;
+          }
+          if (entry.kind.startsWith('LOAN')) return isFundLoan;
+          if (entry.kind === 'ADJUSTMENT') return noteUpper.includes('-FUND') || noteUpper.includes('[FUND_ADJ]');
+          return isFundTx;
+        }
+        return true;
+      })
+      .slice()
+      .sort((a, b) => (a.date - b.date) || ((a.entityId || 0) - (b.entityId || 0)));
+
+    let running = mode === 1
+      ? this.roundCurrency((Number(wallet.openingBalance) || 0) - openingFund)
+      : mode === 2
+        ? this.roundCurrency(openingFund)
+        : this.roundCurrency(Number(wallet.openingBalance) || 0);
+
     const rows = [];
     for (const entry of relevant) {
       let delta = 0;
-      if (entry.kind === 'INCOME' || entry.kind === 'EXPENSE_REVERSAL') {
-        delta = entry.rawAmount;
-      } else if (entry.kind === 'EXPENSE') {
-        delta = -entry.rawAmount;
-      } else if (entry.kind === 'TRANSFER') {
-        const tr = entry.rawEntity;
-        if (Number(tr.sourceWalletId) === wId && Number(tr.destinationWalletId) === wId) {
-          delta = 0;
-        } else if (Number(tr.sourceWalletId) === wId) {
-          delta = -(Number(tr.amount ?? tr.principalAmount) || 0) - (Number(tr.feeAmount) || 0);
-        } else if (Number(tr.destinationWalletId) === wId) {
-          delta = tr.destinationAmount !== null && tr.destinationAmount !== undefined && Number(tr.destinationAmount) > 0
+      const noteUpper = String(entry.note || '').toUpperCase();
+      const tagsUpper = String(entry.tags || '').toUpperCase();
+      if (mode === 1) {
+        if (entry.kind === 'TRANSFER') {
+          const tr = entry.rawEntity;
+          const srcAmt = Number(tr.principalAmount ?? tr.amount) || 0;
+          const dstAmt = tr.destinationAmount !== null && tr.destinationAmount !== undefined && Number(tr.destinationAmount) > 0
             ? Number(tr.destinationAmount)
-            : Number(tr.amount ?? tr.principalAmount) || 0;
+            : srcAmt;
+          const isBorrowOrSettle = noteUpper.includes('[FUND_BORROW]') || noteUpper.includes('[FUND_SETTLE]');
+          const isReturnOrTopup = noteUpper.includes('[FUND_RETURN]') || noteUpper.includes('[FUND_TOPUP]');
+          if (Number(tr.sourceWalletId) === wId && Number(tr.destinationWalletId) === wId) {
+            delta = isBorrowOrSettle ? dstAmt : isReturnOrTopup ? -srcAmt : 0;
+          } else if (Number(tr.sourceWalletId) === wId) {
+            delta = isBorrowOrSettle ? 0 : -srcAmt;
+          } else if (Number(tr.destinationWalletId) === wId) {
+            delta = isReturnOrTopup ? 0 : dstAmt;
+          }
+        } else {
+          delta = Number(entry.signedAmount) || 0;
         }
-      } else if (entry.kind === 'LOAN_LENT') {
-        delta = -entry.rawAmount;
-      } else if (entry.kind === 'LOAN_BORROWED') {
-        delta = entry.rawAmount;
-      } else if (entry.kind === 'LOAN_REPAYMENT') {
-        delta = entry.isPositiveFlow ? entry.rawAmount : -entry.rawAmount;
-      } else if (entry.kind === 'ADJUSTMENT') {
-        delta = Number(entry.rawEntity.deltaAmount) || 0;
+      } else if (mode === 2) {
+        if (entry.kind === 'TRANSFER') {
+          const tr = entry.rawEntity;
+          const srcAmt = Number(tr.principalAmount ?? tr.amount) || 0;
+          const dstAmt = tr.destinationAmount !== null && tr.destinationAmount !== undefined && Number(tr.destinationAmount) > 0
+            ? Number(tr.destinationAmount)
+            : srcAmt;
+          const isFundTr = noteUpper.includes('[FUND_TRANSFER]');
+          const isBorrowOrSettle = noteUpper.includes('[FUND_BORROW]') || noteUpper.includes('[FUND_SETTLE]');
+          const isReturnOrTopup = noteUpper.includes('[FUND_RETURN]') || noteUpper.includes('[FUND_TOPUP]');
+          if (Number(tr.sourceWalletId) === wId && Number(tr.destinationWalletId) === wId) {
+            delta = isBorrowOrSettle ? -srcAmt : isReturnOrTopup ? dstAmt : 0;
+          } else if (Number(tr.sourceWalletId) === wId) {
+            delta = (isFundTr || isBorrowOrSettle) ? -srcAmt : 0;
+          } else if (Number(tr.destinationWalletId) === wId) {
+            delta = (isFundTr || isReturnOrTopup) ? dstAmt : 0;
+          }
+        } else if (entry.kind === 'ADJUSTMENT') {
+          delta = noteUpper.includes('[FUND_ADJ]') ? (Number(entry.signedAmount) || 0) : 0;
+        } else if (entry.kind === 'EXPENSE' && tagsUpper.includes('FUND_BORROW')) {
+          delta = -Math.abs(Number(entry.rawAmount) || 0);
+        } else {
+          delta = Number(entry.signedAmount) || 0;
+        }
+      } else {
+        if (entry.kind === 'TRANSFER') {
+          const tr = entry.rawEntity;
+          const srcAmt = Number(tr.principalAmount ?? tr.amount) || 0;
+          const dstAmt = tr.destinationAmount !== null && tr.destinationAmount !== undefined && Number(tr.destinationAmount) > 0
+            ? Number(tr.destinationAmount)
+            : srcAmt;
+          if (Number(tr.sourceWalletId) === wId && Number(tr.destinationWalletId) === wId) {
+            delta = 0;
+          } else if (Number(tr.sourceWalletId) === wId) {
+            delta = -srcAmt;
+          } else if (Number(tr.destinationWalletId) === wId) {
+            delta = dstAmt;
+          }
+        } else {
+          delta = Number(entry.signedAmount) || 0;
+        }
       }
       running = this.roundCurrency(running + delta);
       rows.push({
@@ -992,6 +1432,14 @@ export function parseFinancialSms(rawSms, wallets = []) {
 }
 
 export const BackupManager = {
+  defaultWallets() {
+    return JSON.parse(JSON.stringify(DEFAULT_STARTER_WALLETS));
+  },
+
+  defaultCategories() {
+    return JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
+  },
+
   createBackupPayload(state) {
     return {
       schemaVersion: 1,

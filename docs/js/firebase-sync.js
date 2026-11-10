@@ -190,7 +190,10 @@ export const PocketCloudSync = {
         note: data.note || '',
         reference: data.reference || '',
         tags: data.tags || '',
-        attachmentUri: data.attachmentUri || ''
+        attachmentUri: data.attachmentUri || '',
+        transferId: data.transferId ? Number(data.transferId) : null,
+        parentTransactionId: data.parentTransactionId ? Number(data.parentTransactionId) : null,
+        loanActivityId: data.loanActivityId ? Number(data.loanActivityId) : null
       };
     });
 
@@ -266,14 +269,16 @@ export const PocketCloudSync = {
 
     const adjustments = adjsSnap.docs.map(d => {
       const data = d.data();
+      const diff = Number(data.difference ?? data.deltaAmount ?? 0);
       return {
         id: Number(data.entityId || d.id),
         walletId: Number(data.walletId || 1),
-        actualBalance: Number(data.actualBalance || 0),
-        calculatedBalanceBefore: Number(data.calculatedBalanceBefore || 0),
-        difference: Number(data.difference || 0),
+        actualBalance: Number(data.actualBalance ?? data.targetBalance ?? 0),
+        calculatedBalanceBefore: Number(data.calculatedBalanceBefore ?? data.previousCalculatedBalance ?? 0),
+        difference: diff,
+        deltaAmount: diff,
         date: Number(data.date || Date.now()),
-        reason: data.reason || '',
+        reason: data.reason || 'Reconciliation',
         note: data.note || '',
         isReversed: Boolean(data.isReversed)
       };
@@ -281,12 +286,15 @@ export const PocketCloudSync = {
 
     const transfers = transSnap.docs.map(d => {
       const data = d.data();
+      const pAmt = Number(data.principalAmount ?? data.amount ?? 0);
+      const dAmt = Number(data.destinationAmount || pAmt);
       return {
         id: Number(data.entityId || d.id),
         sourceWalletId: Number(data.sourceWalletId || 1),
         destinationWalletId: Number(data.destinationWalletId || 1),
-        principalAmount: Number(data.principalAmount || 0),
-        destinationAmount: Number(data.destinationAmount || 0),
+        principalAmount: pAmt,
+        amount: pAmt,
+        destinationAmount: dAmt,
         conversionRate: Number(data.conversionRate || 1),
         feeMode: data.feeMode || 'NONE',
         fixedFeeInput: Number(data.fixedFeeInput || 0),
@@ -297,7 +305,11 @@ export const PocketCloudSync = {
       };
     });
 
+    const anyWalletHasFund = wallets.some(w => /\[VFUND:1:/i.test(String(w.accountHint || '')) || String(w.type || '').toUpperCase() === 'FUND');
+    const fundFeatureEnabled = Boolean(uData.fundFeatureEnabled ?? anyWalletHasFund);
+
     return {
+      backupUpdatedAtMillis: Date.now(),
       profile: {
         uid,
         email: uData.email || '',
@@ -310,6 +322,7 @@ export const PocketCloudSync = {
         boxColorHex: uData.boxColorHex || '',
         boxOpacity: Number(uData.boxOpacity ?? 0.50),
         appLanguage: uData.appLanguage || 'EN',
+        fundFeatureEnabled,
         subscriptionTier: uData.subscriptionTier || 'FREE',
         subscriptionExpiresAt: uData.subscriptionExpiresAt ? Number(uData.subscriptionExpiresAt) : null,
         activationCode: uData.activationCode || '',
@@ -340,6 +353,7 @@ export const PocketCloudSync = {
           boxColorHex: uData.boxColorHex || '',
           boxOpacity: Number(uData.boxOpacity ?? 0.50),
           appLanguage: uData.appLanguage || 'EN',
+          fundFeatureEnabled,
           masterMonthlyBudget: Number(uData.masterMonthlyBudget || 0),
           hideBalancesPrivacy: Boolean(uData.hideBalancesPrivacy),
           subscriptionTier: uData.subscriptionTier || 'FREE',
@@ -368,22 +382,23 @@ export const PocketCloudSync = {
       currencySymbol: '৳',
       themeMode: (state.settings.themeMode === 'LIGHT') ? 'LIGHT' : 'DARK',
       defaultWalletId: Number(state.settings.defaultWalletId) || 1,
-      warnOnNegativeBalance: true,
-      loanDeadlineNotificationEnabled: true,
-      dailyExpenseReminderEnabled: true,
-      dailyReminderHour: 20,
-      dailyReminderMinute: 0,
+      warnOnNegativeBalance: Boolean(state.settings.warnOnNegativeBalance ?? true),
+      loanDeadlineNotificationEnabled: Boolean(state.settings.loanDeadlineNotificationEnabled ?? true),
+      dailyExpenseReminderEnabled: Boolean(state.settings.dailyExpenseReminderEnabled ?? true),
+      dailyReminderHour: Number(state.settings.dailyReminderHour ?? 20),
+      dailyReminderMinute: Number(state.settings.dailyReminderMinute ?? 0),
       backgroundOpacity: Number(state.settings.backgroundOpacity ?? 0.85),
       accentColorHex: state.settings.accentColorHex || '#F15A24',
       boxColorHex: state.settings.boxColorHex || '',
       boxOpacity: Number(state.settings.boxOpacity ?? 0.50),
       appLanguage: (state.settings.appLanguage || 'EN').toUpperCase() === 'BN' ? 'BN' : 'EN',
+      fundFeatureEnabled: Boolean(state.settings.fundFeatureEnabled),
       dateFormatPattern: 'dd MMM yyyy',
       masterMonthlyBudget: Number(state.settings.masterMonthlyBudget || 0),
       hideBalancesPrivacy: Boolean(state.settings.hideBalancesPrivacy),
       subscriptionTier: state.settings.subscriptionTier || 'FREE',
       subscriptionExpiresAt: state.settings.subscriptionExpiresAt ? Number(state.settings.subscriptionExpiresAt) : null,
-      activationCode: state.settings.activationCode || '',
+      activationCode: state.settings.activationCode || state.settings.activatedCode || '',
       hasCompletedOnboarding: Boolean(state.settings.hasCompletedOnboarding),
       syncVersion: (Number(state.settings.syncVersion) || 1) + 1,
       updatedAt: serverTimestamp()
@@ -396,10 +411,9 @@ export const PocketCloudSync = {
       await setDoc(userRef, profileData, { merge: true });
     }
 
-    // Write subcollections in batches
     const batch = writeBatch(db);
 
-    // Wallets
+    // 1. Wallets
     for (const w of (state.wallets || [])) {
       const ref = doc(db, 'users', uid, 'wallets', String(w.id));
       batch.set(ref, {
@@ -424,7 +438,7 @@ export const PocketCloudSync = {
       }, { merge: true });
     }
 
-    // Categories
+    // 2. Categories
     for (const c of (state.categories || [])) {
       const ref = doc(db, 'users', uid, 'categories', String(c.id));
       batch.set(ref, {
@@ -443,8 +457,8 @@ export const PocketCloudSync = {
       }, { merge: true });
     }
 
-    // Recent Transactions (up to 100 in current batch)
-    const recentTx = (state.transactions || []).slice(-100);
+    // 3. Transactions
+    const recentTx = (state.transactions || []).slice(-120);
     for (const t of recentTx) {
       const ref = doc(db, 'users', uid, 'transactions', String(t.id));
       batch.set(ref, {
@@ -458,12 +472,40 @@ export const PocketCloudSync = {
         note: String(t.note || '').slice(0, 1000),
         reference: String(t.reference || '').slice(0, 200),
         tags: String(t.tags || '').slice(0, 500),
+        transferId: t.transferId ? Number(t.transferId) : null,
+        parentTransactionId: t.parentTransactionId ? Number(t.parentTransactionId) : null,
+        loanActivityId: t.loanActivityId ? Number(t.loanActivityId) : null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       }, { merge: true });
     }
 
-    // Loans
+    // 4. Transfers (including Return to Fund, Personal Borrow, Official Fund In/Out)
+    const recentTr = (state.transfers || []).slice(-120);
+    for (const tr of recentTr) {
+      const ref = doc(db, 'users', uid, 'transfers', String(tr.id));
+      const pAmt = Number(tr.principalAmount ?? tr.amount ?? 0);
+      const dAmt = Number(tr.destinationAmount || pAmt);
+      batch.set(ref, {
+        userId: uid,
+        entityId: Number(tr.id),
+        sourceWalletId: Number(tr.sourceWalletId || 1),
+        destinationWalletId: Number(tr.destinationWalletId || 1),
+        principalAmount: pAmt,
+        destinationAmount: dAmt,
+        conversionRate: Number(tr.conversionRate || 1),
+        feeMode: String(tr.feeMode || (Number(tr.feeAmount) > 0 ? 'MANUAL' : 'NONE')).slice(0, 40),
+        fixedFeeInput: Number(tr.fixedFeeInput ?? tr.feeAmount ?? 0),
+        percentageInput: Number(tr.percentageInput || 0),
+        feeAmount: Number(tr.feeAmount || 0),
+        date: Number(tr.date || Date.now()),
+        note: String(tr.note || '').slice(0, 1000),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    // 5. Loans
     for (const l of (state.loans || [])) {
       const ref = doc(db, 'users', uid, 'loans', String(l.id));
       batch.set(ref, {
@@ -485,8 +527,8 @@ export const PocketCloudSync = {
       }, { merge: true });
     }
 
-    // Loan Activities (Disbursements & Repayments)
-    const acts = (state.loanPayments || state.loanActivities || []).slice(-100);
+    // 6. Loan Activities (Disbursements & Repayments)
+    const acts = (state.loanPayments || state.loanActivities || []).slice(-120);
     for (const act of acts) {
       const ref = doc(db, 'users', uid, 'loan_activities', String(act.id));
       batch.set(ref, {
@@ -504,22 +546,103 @@ export const PocketCloudSync = {
       }, { merge: true });
     }
 
-    // Clean up orphaned cloud records for loans and loan activities
+    // 7. Balance Adjustments
+    const adjs = (state.adjustments || []).slice(-80);
+    for (const adj of adjs) {
+      const ref = doc(db, 'users', uid, 'balance_adjustments', String(adj.id));
+      const diff = Number(adj.difference ?? adj.deltaAmount ?? 0);
+      batch.set(ref, {
+        userId: uid,
+        entityId: Number(adj.id),
+        walletId: Number(adj.walletId || 1),
+        actualBalance: Number(adj.actualBalance ?? adj.targetBalance ?? 0),
+        calculatedBalanceBefore: Number(adj.calculatedBalanceBefore ?? adj.previousCalculatedBalance ?? 0),
+        difference: diff,
+        date: Number(adj.date || Date.now()),
+        reason: String(adj.reason || 'Reconciliation').slice(0, 100),
+        note: String(adj.note || '').slice(0, 1000),
+        isReversed: Boolean(adj.isReversed),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    // 8. Recurring Transactions
+    for (const r of (state.recurringTransactions || [])) {
+      const ref = doc(db, 'users', uid, 'recurring_transactions', String(r.id));
+      batch.set(ref, {
+        userId: uid,
+        entityId: Number(r.id),
+        title: String(r.title || 'Recurring').slice(0, 150),
+        type: (r.type === 'INCOME') ? 'INCOME' : 'EXPENSE',
+        amountMode: (r.amountMode === 'MANUAL') ? 'MANUAL' : 'FIXED',
+        amount: Number(r.amount || 0),
+        categoryId: Number(r.categoryId || 1),
+        defaultWalletId: Number(r.defaultWalletId || 1),
+        frequency: String(r.frequency || 'MONTHLY').slice(0, 40),
+        dayOfMonth: Number(r.dayOfMonth || 1),
+        customIntervalDays: Number(r.customIntervalDays || 30),
+        nextDueDate: Number(r.nextDueDate || Date.now()),
+        lastPaidDate: r.lastPaidDate ? Number(r.lastPaidDate) : null,
+        note: String(r.note || '').slice(0, 1000),
+        isActive: Boolean(r.isActive ?? true),
+        reminderEnabled: Boolean(r.reminderEnabled ?? true),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    // 9. Savings Goals
+    for (const g of (state.savingsGoals || [])) {
+      const ref = doc(db, 'users', uid, 'savings_goals', String(g.id));
+      batch.set(ref, {
+        userId: uid,
+        entityId: Number(g.id),
+        title: String(g.title || 'Goal').slice(0, 150),
+        targetAmount: Number(g.targetAmount || 0),
+        savedAmount: Number(g.savedAmount || 0),
+        iconName: String(g.iconName || 'SAVINGS').slice(0, 100),
+        colorHex: String(g.colorHex || '#2E9E5B').slice(0, 20),
+        deadlineMillis: g.deadlineMillis ? Number(g.deadlineMillis) : null,
+        targetDate: g.targetDate ? Number(g.targetDate) : null,
+        note: String(g.note || '').slice(0, 1000),
+        goalCreatedAt: Number(g.goalCreatedAt || Date.now()),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    }
+
+    // Reconcile deletions / Undo across cloud collections
     try {
-      const cloudLoans = await getDocs(collection(db, 'users', uid, 'loans'));
-      const localLoanIds = new Set((state.loans || []).map(l => String(l.id)));
-      for (const d of cloudLoans.docs) {
-        if (!localLoanIds.has(d.id)) {
-          batch.delete(d.ref);
-        }
-      }
-      const cloudActs = await getDocs(collection(db, 'users', uid, 'loan_activities'));
-      const localActIds = new Set((state.loanPayments || state.loanActivities || []).map(a => String(a.id)));
-      for (const d of cloudActs.docs) {
-        if (!localActIds.has(d.id)) {
-          batch.delete(d.ref);
-        }
-      }
+      const [cloudTxs, cloudTrs, cloudLoans, cloudActs, cloudAdjs, cloudRecs, cloudGoals] = await Promise.all([
+        getDocs(collection(db, 'users', uid, 'transactions')),
+        getDocs(collection(db, 'users', uid, 'transfers')),
+        getDocs(collection(db, 'users', uid, 'loans')),
+        getDocs(collection(db, 'users', uid, 'loan_activities')),
+        getDocs(collection(db, 'users', uid, 'balance_adjustments')),
+        getDocs(collection(db, 'users', uid, 'recurring_transactions')),
+        getDocs(collection(db, 'users', uid, 'savings_goals'))
+      ]);
+      const localTxIds = new Set((state.transactions || []).map(x => String(x.id)));
+      for (const d of cloudTxs.docs) { if (!localTxIds.has(d.id)) batch.delete(d.ref); }
+
+      const localTrIds = new Set((state.transfers || []).map(x => String(x.id)));
+      for (const d of cloudTrs.docs) { if (!localTrIds.has(d.id)) batch.delete(d.ref); }
+
+      const localLoanIds = new Set((state.loans || []).map(x => String(x.id)));
+      for (const d of cloudLoans.docs) { if (!localLoanIds.has(d.id)) batch.delete(d.ref); }
+
+      const localActIds = new Set((state.loanPayments || state.loanActivities || []).map(x => String(x.id)));
+      for (const d of cloudActs.docs) { if (!localActIds.has(d.id)) batch.delete(d.ref); }
+
+      const localAdjIds = new Set((state.adjustments || []).map(x => String(x.id)));
+      for (const d of cloudAdjs.docs) { if (!localAdjIds.has(d.id)) batch.delete(d.ref); }
+
+      const localRecIds = new Set((state.recurringTransactions || []).map(x => String(x.id)));
+      for (const d of cloudRecs.docs) { if (!localRecIds.has(d.id)) batch.delete(d.ref); }
+
+      const localGoalIds = new Set((state.savingsGoals || []).map(x => String(x.id)));
+      for (const d of cloudGoals.docs) { if (!localGoalIds.has(d.id)) batch.delete(d.ref); }
     } catch (e) {
       console.warn("Cloud cleanup check warning:", e);
     }
@@ -569,17 +692,54 @@ export const PocketCloudSync = {
     throw new Error("Invalid or expired activation code.");
   },
 
-  async submitFeedbackReport({ subject, details }) {
+  async submitFeedbackReport(subjectOrObj, detailsArg = '', userNameArg = '') {
     if (!db || !this.currentUser?.uid) throw new Error("Please sign in to submit a bug report.");
+    const subject = typeof subjectOrObj === 'object' ? subjectOrObj.subject : subjectOrObj;
+    const details = typeof subjectOrObj === 'object' ? subjectOrObj.details : detailsArg;
     const colRef = collection(db, 'feedback_reports');
     await setDoc(doc(colRef), {
       uid: this.currentUser.uid,
       userEmail: String(this.currentUser.email || '').slice(0, 200),
-      userName: String(this.currentUser.displayName || 'Pocket User').slice(0, 120),
+      userName: String(userNameArg || this.currentUser.displayName || 'Pocket User').slice(0, 120),
       subject: String(subject || 'Feedback').slice(0, 300),
       details: String(details || '').slice(0, 5000),
       platform: 'Web',
       createdAt: serverTimestamp()
     });
+  },
+
+  async fetchAllCloudActivationCodes() {
+    if (!db || !this.isDeveloperAdmin()) return [];
+    try {
+      const snap = await getDocs(collection(db, 'activation_codes'));
+      return snap.docs.map(d => {
+        const data = d.data();
+        return {
+          code: d.id,
+          tier: data.tier || 'LIFETIME',
+          status: data.isClaimed ? 'CLAIMED' : 'AVAILABLE',
+          usedByEmail: data.claimedByEmail || ''
+        };
+      });
+    } catch (_) {
+      return [];
+    }
+  },
+
+  async generateNewCloudActivationCode(tier = 'LIFETIME') {
+    if (!db || !this.isDeveloperAdmin()) return null;
+    const prefix = tier === 'LIFETIME' ? 'PKLT' : 'PK3D';
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    const code = `${prefix}-${seg()}-${seg()}`;
+    await setDoc(doc(db, 'activation_codes', code), {
+      code,
+      tier,
+      isClaimed: false,
+      claimedByUid: '',
+      claimedByEmail: '',
+      createdAt: serverTimestamp()
+    });
+    return code;
   }
 };

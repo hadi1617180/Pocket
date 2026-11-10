@@ -267,6 +267,9 @@ interface PocketDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLoanActivities(activities: List<LoanActivityEntity>)
 
+    @Update
+    suspend fun updateLoanActivity(activity: LoanActivityEntity)
+
     @Query("DELETE FROM loan_activities WHERE id = :activityId")
     suspend fun deleteLoanActivityById(activityId: Long)
 
@@ -317,12 +320,15 @@ interface PocketDao {
             insertLoanActivity(activity)
         } else {
             deleteTransactionsByLoanActivityId(activity.id)
-            insertLoanActivity(activity)
+            updateLoanActivity(activity)
+            activity.id
         }
         if (activity.interestPortion > 0.0 && activity.walletId != null && activity.walletId > 0L) {
             val isLent = loan.direction == LoanDirection.LENT.name
-            val isFundBorrowActivity = activity.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
-            val isFundActivity = activity.note.contains("[FUND_LOAN]", ignoreCase = true)
+            val isFundBorrowActivity = activity.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true) ||
+                loan.note.contains("[FUND_LOAN_BORROW]", ignoreCase = true)
+            val isFundActivity = activity.note.contains("[FUND_LOAN]", ignoreCase = true) ||
+                loan.note.contains("[FUND_LOAN]", ignoreCase = true)
             val interestTags = when {
                 isFundBorrowActivity && !isLent -> "loan-interest, FUND_BORROW"
                 (isFundActivity || isFundBorrowActivity) && isLent -> "loan-interest, FUND_IN"
