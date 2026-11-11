@@ -307,6 +307,7 @@ export const PocketCloudSync = {
 
     const anyWalletHasFund = wallets.some(w => /\[VFUND:1:/i.test(String(w.accountHint || '')) || String(w.type || '').toUpperCase() === 'FUND');
     const fundFeatureEnabled = Boolean(uData.fundFeatureEnabled ?? anyWalletHasFund);
+    const hasCompletedOnboarding = Boolean(uData.hasCompletedOnboarding || wallets.length > 0 || transactions.length > 0);
 
     return {
       backupUpdatedAtMillis: Date.now(),
@@ -326,7 +327,7 @@ export const PocketCloudSync = {
         subscriptionTier: uData.subscriptionTier || 'FREE',
         subscriptionExpiresAt: uData.subscriptionExpiresAt ? Number(uData.subscriptionExpiresAt) : null,
         activationCode: uData.activationCode || '',
-        hasCompletedOnboarding: Boolean(uData.hasCompletedOnboarding),
+        hasCompletedOnboarding,
         syncVersion: Number(uData.syncVersion || 1)
       },
       payload: {
@@ -359,7 +360,8 @@ export const PocketCloudSync = {
           subscriptionTier: uData.subscriptionTier || 'FREE',
           subscriptionExpiresAt: uData.subscriptionExpiresAt ? Number(uData.subscriptionExpiresAt) : null,
           activationCode: uData.activationCode || '',
-          hasCompletedOnboarding: Boolean(uData.hasCompletedOnboarding)
+          hasCompletedOnboarding,
+          onboardingStep: hasCompletedOnboarding ? 'COMPLETED' : 'PAGE_1_WELCOME'
         }
       }
     };

@@ -379,6 +379,69 @@ export function applyBackupPayloadToState(p, skipCloudPush = true) {
   renderApp();
 }
 
+export function wipeLocalDataAndResetToWelcome() {
+  clearTimeout(saveStateToLocal._cloudDebounce);
+  saveStateToLocal._cloudDebounce = null;
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch (e) {
+    console.warn('Local storage clear warning:', e);
+  }
+
+  const prevTheme = AppState.settings?.themeMode || DEFAULT_SETTINGS.themeMode;
+  const prevAccent = AppState.settings?.accentColorHex || DEFAULT_SETTINGS.accentColorHex;
+  const prevLang = AppState.settings?.appLanguage || DEFAULT_SETTINGS.appLanguage;
+
+  AppState.settings = {
+    ...DEFAULT_SETTINGS,
+    themeMode: prevTheme,
+    accentColorHex: prevAccent,
+    appLanguage: prevLang,
+    hasCompletedOnboarding: false,
+    onboardingStep: 'PAGE_1_WELCOME',
+    userName: '',
+    profilePhotoUri: ''
+  };
+
+  AppState.wallets = JSON.parse(JSON.stringify(DEFAULT_STARTER_WALLETS));
+  AppState.categories = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
+  AppState.transactions = [];
+  AppState.transactionSplits = [];
+  AppState.transfers = [];
+  AppState.loans = [];
+  AppState.loanPayments = [];
+  AppState.adjustments = [];
+  AppState.recurringTransactions = [];
+  AppState.savingsGoals = [];
+  AppState.undoStack = [];
+
+  AppState.currentScreen = 'BALANCES';
+  AppState.screenStack = [];
+  AppState.isFabExpanded = false;
+  AppState.selectedWalletDetailId = null;
+  AppState.walletDetailSubTab = 0;
+  AppState.walletDetailSearch = '';
+  AppState.editingTx = null;
+  AppState.isAppUnlocked = true;
+  AppState.pinInputBuffer = '';
+  AppState.pinErrorMsg = '';
+
+  AppState.onboardingSelectedIds = new Set();
+  AppState.onboardingBalances = {};
+  AppState.onboardingLoans = [
+    { direction: 'LENT', personName: '', amount: '', loanDateMs: Date.now(), dueDateMs: null }
+  ];
+
+  AppState.googleUser = null;
+  AppState.isCloudSyncing = false;
+  AppState.lastCloudSyncStatus = '';
+  AppState.lastAppliedCloudMs = 0;
+
+  closeModal();
+  applyThemeAndAccentVariables();
+  renderApp();
+}
+
 export function computeDerivedData() {
   const activeWallets = AppState.wallets
     .filter(w => !w.isArchived)
@@ -2357,10 +2420,15 @@ function renderSettingsScreen(derived) {
             </button>
           </div>
         ` : `
-          <button class="pocket-btn-primary" style="width:100%;" onclick="window.PocketApp.signInGoogleFromSettings()">
-            <span class="material-symbols-rounded">login</span>
-            <span>${t('Sign in with Google')}</span>
-          </button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="pocket-btn-primary" style="flex:1;min-height:42px;" onclick="window.PocketApp.signInGoogleFromSettings()">
+              <span class="material-symbols-rounded">login</span>
+              <span>${t('Sign in with Google')}</span>
+            </button>
+            <button class="pocket-btn-outlined" style="min-height:42px;" onclick="window.PocketApp.signOutGoogle()">
+              <span>${t('Sign Out')}</span>
+            </button>
+          </div>
         `}
       </div>
 
@@ -2880,10 +2948,19 @@ window.PocketApp = {
       AppState.googleUser = user;
       const snap = await PocketCloudSync.pullSnapshot(user.uid);
       if (snap && snap.payload && (snap.profile.hasCompletedOnboarding || snap.payload.wallets.length > 0)) {
+        snap.payload.settings = {
+          ...(snap.payload.settings || {}),
+          hasCompletedOnboarding: true,
+          onboardingStep: 'COMPLETED'
+        };
         applyBackupPayloadToState(snap.payload, true);
-        AppState.settings.hasCompletedOnboarding = true;
         PocketCloudSync.startRealtimeListeners(user.uid, (remote) => {
-          if (remote?.payload) {
+          if (remote?.payload && PocketCloudSync.currentUser) {
+            remote.payload.settings = {
+              ...(remote.payload.settings || {}),
+              hasCompletedOnboarding: true,
+              onboardingStep: 'COMPLETED'
+            };
             applyBackupPayloadToState(remote.payload, true);
             renderApp();
           }
@@ -2908,10 +2985,11 @@ window.PocketApp = {
     renderApp();
   },
 
-  onboardingBackToPage1() {
-    AppState.settings.onboardingStep = 'PAGE_1_WELCOME';
-    saveStateToLocal(true);
-    renderApp();
+  async onboardingBackToPage1() {
+    if (AppState.googleUser || PocketCloudSync.currentUser) {
+      await PocketCloudSync.signOutUser();
+    }
+    wipeLocalDataAndResetToWelcome();
   },
 
   setOnboardingName(val) {
@@ -4491,6 +4569,11 @@ window.PocketApp = {
       AppState.googleUser = user;
       const snap = await PocketCloudSync.pullSnapshot(user.uid);
       if (snap && snap.payload && (snap.payload.transactions.length > 0 || snap.payload.wallets.length > 0)) {
+        snap.payload.settings = {
+          ...(snap.payload.settings || {}),
+          hasCompletedOnboarding: true,
+          onboardingStep: 'COMPLETED'
+        };
         applyBackupPayloadToState(snap.payload, true);
         showSnackbar('Loaded cloud backup from Google account.');
       } else {
@@ -4498,7 +4581,12 @@ window.PocketApp = {
         showSnackbar('Local data backed up to Google account!');
       }
       PocketCloudSync.startRealtimeListeners(user.uid, (remote) => {
-        if (remote?.payload) {
+        if (remote?.payload && PocketCloudSync.currentUser) {
+          remote.payload.settings = {
+            ...(remote.payload.settings || {}),
+            hasCompletedOnboarding: true,
+            onboardingStep: 'COMPLETED'
+          };
           applyBackupPayloadToState(remote.payload, true);
           renderApp();
         }
@@ -4528,10 +4616,22 @@ window.PocketApp = {
   },
 
   async signOutGoogle() {
-    await PocketCloudSync.signOutUser();
-    AppState.googleUser = null;
-    renderApp();
-    showSnackbar('Signed out of Google.');
+    try {
+      if (saveStateToLocal._cloudDebounce && PocketCloudSync.currentUser && AppState.settings.hasCompletedOnboarding) {
+        clearTimeout(saveStateToLocal._cloudDebounce);
+        saveStateToLocal._cloudDebounce = null;
+        try {
+          await PocketCloudSync.pushSnapshot(AppState);
+        } catch (pushErr) {
+          console.warn('Final cloud flush before sign-out warning:', pushErr);
+        }
+      }
+      await PocketCloudSync.signOutUser();
+    } catch (err) {
+      console.warn('Sign out warning:', err);
+    }
+    wipeLocalDataAndResetToWelcome();
+    showSnackbar('Signed out. Local data cleared.');
   },
 
   // Feedback & Admin Dialogs
@@ -4724,10 +4824,24 @@ window.addEventListener('DOMContentLoaded', () => {
         const snap = await PocketCloudSync.pullSnapshot(user.uid);
         if (snap && snap.payload && snap.backupUpdatedAtMillis > AppState.lastAppliedCloudMs) {
           AppState.lastAppliedCloudMs = snap.backupUpdatedAtMillis;
+          if (snap.profile?.hasCompletedOnboarding || (snap.payload.wallets && snap.payload.wallets.length > 0)) {
+            snap.payload.settings = {
+              ...(snap.payload.settings || {}),
+              hasCompletedOnboarding: true,
+              onboardingStep: 'COMPLETED'
+            };
+          }
           applyBackupPayloadToState(snap.payload, true);
         }
         PocketCloudSync.startRealtimeListeners(user.uid, (remote) => {
-          if (remote?.payload) {
+          if (remote?.payload && PocketCloudSync.currentUser) {
+            if (remote.profile?.hasCompletedOnboarding || (remote.payload.wallets && remote.payload.wallets.length > 0)) {
+              remote.payload.settings = {
+                ...(remote.payload.settings || {}),
+                hasCompletedOnboarding: true,
+                onboardingStep: 'COMPLETED'
+              };
+            }
             applyBackupPayloadToState(remote.payload, true);
             renderApp();
           }
