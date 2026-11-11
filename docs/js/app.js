@@ -740,7 +740,7 @@ function renderOnboardingScreen() {
         </div>
 
         <div style="display:flex;flex-direction:column;align-items:center;text-align:center;margin:auto 0;">
-          <img src="./assets/ic_pocket_logo.png" alt="Pocket Logo" class="pocket-logo-tinted" style="width:112px;height:112px;" />
+          <img src="./assets/pocket_logo.svg" alt="Pocket Logo" class="pocket-logo-tinted" style="width:112px;height:112px;" />
           <h1 style="margin:20px 0 6px;font-size:2.2rem;font-weight:800;">Pocket</h1>
           <p style="margin:0 0 32px;color:var(--text-muted);font-size:0.95rem;">${t('Personal Finance, Wallets & Loan Khata')}</p>
 
@@ -882,7 +882,7 @@ function renderOnboardingScreen() {
 function renderAppLockScreen() {
   return `
     <div style="min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;">
-      <img src="./assets/ic_pocket_logo.png" alt="Pocket" class="pocket-logo-tinted" style="width:84px;height:84px;margin-bottom:16px;" />
+      <img src="./assets/pocket_logo.svg" alt="Pocket" class="pocket-logo-tinted" style="width:84px;height:84px;margin-bottom:16px;" />
       <h2 style="margin:0 0 6px;">${t('Pocket is Locked')}</h2>
       <p style="margin:0 0 20px;color:var(--text-muted);font-size:0.9rem;">${t('Enter your App PIN to unlock')}</p>
       <div class="pocket-card" style="padding:20px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px;">
@@ -925,7 +925,7 @@ function renderBalancesScreen(derived) {
       <!-- Top Header: App Logo + Pocket Name + Free Badge + Month Selector + Plain Undo Icon + Settings Icon -->
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;cursor:pointer;min-width:0;" onclick="window.PocketApp.navigateTo('SETTINGS')">
-          <img src="./assets/ic_pocket_logo.png" alt="Pocket" class="pocket-logo-tinted" style="width:42px;height:42px;flex-shrink:0;" />
+          <img src="./assets/pocket_logo.svg" alt="Pocket" class="pocket-logo-tinted" style="width:42px;height:42px;flex-shrink:0;" />
           <span style="font-size:1.5rem;font-weight:800;">Pocket</span>
           ${!derived.isSubscriptionActive ? `
             <span onclick="event.stopPropagation();window.PocketApp.openUpgradeDialog();" style="padding:3px 8px;border-radius:8px;font-size:11px;font-weight:700;background:rgba(var(--accent-rgb),0.2);border:1px solid rgba(var(--accent-rgb),0.5);color:var(--accent-color);">Free</span>

@@ -1224,9 +1224,22 @@ fun PocketBurgundyLogo(
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val pocketColors = LocalPocketColors.current
+    val isDark = pocketColors.isDark
+
     val baseModifier = modifier
         .size(size)
-        .background(Color.Transparent)
+        .background(
+            color = if (isDark) Color.Transparent else Color(0xFF141416),
+            shape = RoundedCornerShape(cornerRadius)
+        )
+        .then(
+            if (!isDark) {
+                Modifier.padding(size * 0.12f)
+            } else {
+                Modifier
+            }
+        )
         .then(
             if (onClick != null) {
                 Modifier.clickable(onClick = onClick)
@@ -1243,7 +1256,6 @@ fun PocketBurgundyLogo(
             painter = painterResource(id = R.drawable.ic_pocket_logo),
             contentDescription = if (onClick != null) "Open Settings" else "Pocket Logo",
             contentScale = ContentScale.Fit,
-            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
             modifier = Modifier.fillMaxSize()
         )
     }
